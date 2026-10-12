@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using Robust.Shared.Utility;
 
@@ -88,10 +88,20 @@ internal static class AudioLoaderWav
         var blockAlign = reader.ReadInt16();
         var bitsPerSample = reader.ReadInt16();
 
-        if (audioType != WavAudioFormatType.PCM)
+        // Starlight start.
+        if (audioType == WavAudioFormatType.Extensible && size >= 40)
+        {
+            reader.ReadInt16(); // cbSize
+            reader.ReadInt16(); // valid bits per sample
+            reader.ReadInt32(); // channel mask
+            audioType = (WavAudioFormatType) reader.ReadInt16(); // first two bytes of the sub format GUID
+        }
+
+        if (audioType != WavAudioFormatType.PCM && audioType != WavAudioFormatType.IeeeFloat)
         {
             throw new NotImplementedException("Unable to support audio types other than PCM.");
         }
+        // Starlight end
 
         DebugTools.Assert(byteRate == sampleRate * channels * bitsPerSample / 8);
 
@@ -147,6 +157,10 @@ internal static class AudioLoaderWav
     {
         Unknown = 0,
         PCM = 1,
+        // Starlight-start
+        IeeeFloat = 3,
+        Extensible = unchecked((short) 0xFFFE),
+        // Starlight-end
         // There's a bunch of other types, those are all unsupported.
     }
 }

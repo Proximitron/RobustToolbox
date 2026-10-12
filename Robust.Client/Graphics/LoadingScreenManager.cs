@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Robust.Client.ResourceManagement;
+using Robust.Client._Starlight.Graphics;
 using Robust.Client.UserInterface;
 using Robust.Shared;
 using Robust.Shared.Configuration;
@@ -72,6 +73,8 @@ internal sealed partial class LoadingScreenManager : ILoadingScreenManager
     private const int FontSize = 11;
     private VectorFont? _font;
 
+    private readonly StarlightLoadingScreen _starlightScreen = new(); // Starlight
+
     // Number of loading sections for the loading bar. This has to be manually set!
     private int _numberOfLoadingSections;
 
@@ -103,6 +106,8 @@ internal sealed partial class LoadingScreenManager : ILoadingScreenManager
             _font = new VectorFont(fontResource, FontSize);
         else
             _sawmill.Error($"Could not load font: {FontLocation}");
+
+        _starlightScreen.Initialize(_resourceCache, _sawmill); // Starlight
     }
 
     public void BeginLoadingSection(string sectionName) => BeginLoadingSection(sectionName, false);
@@ -200,15 +205,19 @@ internal sealed partial class LoadingScreenManager : ILoadingScreenManager
 
         var scale = UserInterfaceManager.CalculateUIScale(_clyde.MainWindow.ContentScale.X, _cfg);
 
-        // Start at the center!
-        var location = screenSize / 2;
+        // Starlight start
+        Texture? logo = null;
+        if (!string.IsNullOrEmpty(_splashLogo) && _resourceCache.TryGetResource<TextureResource>(_splashLogo, out var logoResource))
+            logo = logoResource.Texture;
 
-        DrawSplash(handle, ref location, scale);
-
-        DrawLoadingBar(handle, ref location, scale);
+        var progress = _numberOfLoadingSections > 0 ? _currentSection / (float) _numberOfLoadingSections : 0f;
+        _starlightScreen.Draw(handle, screenSize, scale, logo, _showLoadingBar ? progress : 0f, _currentSectionName);
 
         if (_showDebug)
         {
+            // Debug info goes into the top-left corner, out of the way of the splash.
+            var location = new Vector2i(20, 20);
+            // Starlight end
             DrawCurrentLoading(handle, ref location, scale);
 
             DrawTopTimes(handle, ref location, scale);

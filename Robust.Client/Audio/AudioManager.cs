@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Threading;
 using OpenTK.Audio.OpenAL;
 using Robust.Client.Audio.Sources;
@@ -29,17 +30,16 @@ internal sealed partial class AudioManager : IAudioInternal
 
     private ALDevice _openALDevice;
     private ALContext _openALContext;
+    #region Starlight
+    private readonly Dictionary<int, LoadedAudioSample> _audioSampleBuffers = [];
 
-    private readonly Dictionary<int, LoadedAudioSample> _audioSampleBuffers = new();
+    private readonly Dictionary<int, WeakReference<BaseAudioSource>> _audioSources = [];
 
-    private readonly Dictionary<int, WeakReference<BaseAudioSource>> _audioSources =
-        new();
+    private readonly Dictionary<int, WeakReference<BufferedAudioSource>> _bufferedAudioSources = [];
 
-    private readonly Dictionary<int, WeakReference<BufferedAudioSource>> _bufferedAudioSources =
-        new();
-
-    private readonly HashSet<string> _alcDeviceExtensions = new();
-    private readonly HashSet<string> _alContextExtensions = new();
+    private readonly HashSet<string> _alcDeviceExtensions = [];
+    private readonly HashSet<string> _alContextExtensions = [];
+    #endregion
     private Attenuation _attenuation;
     private bool _audioInitialized;
     private bool _focused = true;
@@ -58,10 +58,8 @@ internal sealed partial class AudioManager : IAudioInternal
 
     internal ISawmill OpenALSawmill = default!;
 
-    private void _audioCreateContext()
+    private void AudioCreateContext() // Starlight-edit
     {
-        var useHrtf = _cfg.GetCVar(CVars.AudioHrtf);
-
         // Load up AL context extensions.
         var s = ALC.GetString(_openALDevice, AlcGetString.Extensions) ?? "";
         foreach (var extension in s.Split(' ', StringSplitOptions.RemoveEmptyEntries))
@@ -70,33 +68,12 @@ internal sealed partial class AudioManager : IAudioInternal
         }
 
         var supportsHrtf = HasAlContextExtension("ALC_SOFT_HRTF");
-        var attributeList = new [] { 0 };
-        if (useHrtf && supportsHrtf)
-        {
-            var hrtfCount = ALC.GetInteger(_openALDevice, (AlcGetInteger)AlcSoftGetInteger.NumHrtfSpecifiers);
-            OpenALSawmill.Debug("HRTF specifier count: {0}", hrtfCount);
-
-            if (hrtfCount > 0)
-            {
-                attributeList =
-                [
-                    (int) AlcSoftGetInteger.Hrtf, 1,
-                    // default to the first specifier, im not even really sure in what contexts more than one of these
-                    // exists and i dont think its super valuable to expose another cvar for changing the index
-                    (int) AlcSoftGetInteger.HrtfId, 0,
-                    0
-                ];
-            }
-            else
-            {
-                OpenALSawmill.Warning("HRTF support enabled but no supported specifiers, HRTF will be disabled");
-            }
-        }
+        var attributeList = BuildContextAttributes(); // Starlight: HRTF, output mode and loopback attributes.
 
         _openALContext = ALC.CreateContext(_openALDevice, attributeList);
 
         ALC.MakeContextCurrent(_openALContext);
-        _checkAlcError(_openALDevice);
+        CheckAlcError(_openALDevice); // Starlight-edit
         _checkAlError();
 
         var hrtfEnabled = supportsHrtf ? ALC.GetInteger(_openALDevice, (AlcGetInteger)AlcSoftGetInteger.HrtfStatus) : 0;
@@ -108,17 +85,33 @@ internal sealed partial class AudioManager : IAudioInternal
 
     public IReadOnlyList<string> GetAudioDevices()
     {
+        // Starlight-start: UTF-8 device names.
+        if (ALC.EnumerateAll.IsExtensionPresent() && AlcGetStringListUtf8(AlcAllDevicesSpecifier) is { } allDevices)
+            return allDevices;
+
+        if (ALC.IsExtensionPresent(ALDevice.Null, "ALC_ENUMERATION_EXT") && AlcGetStringListUtf8(AlcDeviceSpecifier) is { } devices)
+            return devices;
+        // Starlight-end
+
         if (ALC.EnumerateAll.IsExtensionPresent())
             return ALC.EnumerateAll.GetStringList(GetEnumerateAllContextStringList.AllDevicesSpecifier).ToList();
 
         if (ALC.IsExtensionPresent(ALDevice.Null, "ALC_ENUMERATION_EXT"))
             return ALC.GetStringList(GetEnumerationStringList.DeviceSpecifier).ToList();
 
-        return Array.Empty<string>();
+        return [];
     }
 
     public string? GetDefaultAudioDevice()
     {
+        // Starlight-start: UTF-8 device names.
+        if (ALC.EnumerateAll.IsExtensionPresent() && AlcGetStringUtf8(ALDevice.Null, AlcDefaultAllDevicesSpecifier) is { } defaultAll)
+            return defaultAll;
+
+        if (ALC.IsExtensionPresent(ALDevice.Null, "ALC_ENUMERATION_EXT") && AlcGetStringUtf8(ALDevice.Null, AlcDefaultDeviceSpecifier) is { } defaultDevice)
+            return defaultDevice;
+        // Starlight-end
+
         if (ALC.EnumerateAll.IsExtensionPresent())
             return ALC.EnumerateAll.GetString(ALDevice.Null, GetEnumerateAllContextString.DefaultAllDevicesSpecifier);
 
@@ -128,41 +121,37 @@ internal sealed partial class AudioManager : IAudioInternal
         return null;
     }
 
-    private bool _audioOpenDevice()
+    private bool AudioOpenDevice()
     {
         var preferredDevice = _cfg.GetCVar(CVars.AudioDevice);
 
         // Open device.
         if (!string.IsNullOrEmpty(preferredDevice))
         {
-            _openALDevice = ALC.OpenDevice(preferredDevice);
+            _openALDevice = OpenDeviceUtf8(preferredDevice); // Starlight-edit
             if (_openALDevice == IntPtr.Zero)
             {
                 OpenALSawmill.Warning("Unable to open preferred audio device '{0}': {1}. Falling back default.",
                     preferredDevice, ALC.GetError(ALDevice.Null));
 
-                _openALDevice = ALC.OpenDevice(null);
+                _openALDevice = OpenDeviceUtf8(null); // Starlight-edit
             }
         }
         else
         {
-            _openALDevice = ALC.OpenDevice(null);
+            _openALDevice = OpenDeviceUtf8(null); // Starlight-edit
         }
 
-        _checkAlcError(_openALDevice);
+        CheckAlcError(_openALDevice); // Starlight-edit
 
         if (_openALDevice == IntPtr.Zero)
         {
-            OpenALSawmill.Error("Unable to open OpenAL device! {1}", ALC.GetError(ALDevice.Null));
+            OpenALSawmill.Error("Unable to open OpenAL device! {0}", ALC.GetError(ALDevice.Null)); // Starlight-edit: format index fix
             return false;
         }
 
         // Load up ALC extensions.
-        var s = ALC.GetString(_openALDevice, AlcGetString.Extensions) ?? "";
-        foreach (var extension in s.Split(' '))
-        {
-            _alcDeviceExtensions.Add(extension);
-        }
+        ReloadDeviceExtensions(); // Starlight-edit
         return true;
     }
 
@@ -172,11 +161,13 @@ internal sealed partial class AudioManager : IAudioInternal
 
         PreloadOpenAl();
 
-        if (!_audioOpenDevice())
+        // Starlight-start: without any output device, run on a silent loopback device instead of having no AL context.
+        if (!AudioOpenDevice() && !TryOpenLoopbackDevice())
             return;
 
         // Create OpenAL context.
-        _audioCreateContext();
+        AudioCreateContext();
+        // Starlight-end
 
         IsEfxSupported = HasAlDeviceExtension("ALC_EXT_EFX");
 
@@ -190,6 +181,7 @@ internal sealed partial class AudioManager : IAudioInternal
 
         _reload.OnChanged += OnReload;
         _audioInitialized = true;
+        InitializeStarlight(); // Starlight
     }
 
     private void OnMuteUnfocusedChanged(bool muteUnfocused)
@@ -236,11 +228,12 @@ internal sealed partial class AudioManager : IAudioInternal
         OpenALSawmill.Info("Switching OpenAL output device to {0}.",
             string.IsNullOrEmpty(requestedDevice) ? "<default>" : requestedDevice);
 
-        if (TryReopenAudioDevice(requestedDevice))
+        if (!_loopback && TryReopenAudioDevice(requestedDevice)) // Starlight-edit: loopback devices can't be reopened, only rebuilt.
         {
             ReloadDeviceExtensions();
             IsEfxSupported = HasAlDeviceExtension("ALC_EXT_EFX");
             SetMasterGain(_cfg.GetCVar(CVars.AudioMasterVolume));
+            _lastDefaultDevice = GetDefaultAudioDevice(); // Starlight-edit
             return;
         }
 
@@ -248,23 +241,13 @@ internal sealed partial class AudioManager : IAudioInternal
         OpenALSawmill.Warning(
             "ALC_SOFT_reopen_device is unavailable or failed. Falling back to full audio device rebuild.");
 
-        DisposeAllAudio();
-        FlushALDisposeQueues();
-
-        if (!_audioOpenDevice())
-        {
-            OpenALSawmill.Error("Failed to reopen OpenAL device after device switch.");
-            return;
-        }
-
-        _audioCreateContext();
-        IsEfxSupported = HasAlDeviceExtension("ALC_EXT_EFX");
-        SetMasterGain(_cfg.GetCVar(CVars.AudioMasterVolume));
+        RebuildAudioDevice(); // Starlight-edit
     }
 
     private bool TryReopenAudioDevice(string requestedDevice)
     {
-        if (_openALDevice == ALDevice.Null ||
+        if (_loopback || // Starlight-edit
+            _openALDevice == ALDevice.Null || // Starlight-edit
             !ALC.IsExtensionPresent(_openALDevice, "ALC_SOFT_reopen_device"))
         {
             return false;
@@ -275,8 +258,8 @@ internal sealed partial class AudioManager : IAudioInternal
             return false;
 
         var reopenTarget = string.IsNullOrEmpty(requestedDevice) ? null : requestedDevice;
-        var reopened = reopen(_openALDevice, reopenTarget, IntPtr.Zero);
-        _checkAlcError(_openALDevice);
+        var reopened = reopen(_openALDevice, reopenTarget, BuildContextAttributes()); // Starlight-edit: pass our context attributes, otherwise HRTF/output mode were reset on every device switch.
+        CheckAlcError(_openALDevice); // Starlight-edit
         return reopened;
     }
 
@@ -313,7 +296,7 @@ internal sealed partial class AudioManager : IAudioInternal
             ALC.EFX.DeleteFilter(handles.filterHandle);
     }
 
-    private void _checkAlcError(ALDevice device,
+    private void CheckAlcError(ALDevice device, // Starlight-edit
         [CallerMemberName] string callerMember = "",
         [CallerLineNumber] int callerLineNumber = -1)
     {
@@ -333,7 +316,14 @@ internal sealed partial class AudioManager : IAudioInternal
      * Evil hack because OpenTK doesn't expose the device switch call.
      */
 
-    private delegate bool AlcReopenDeviceSoftDelegate(ALDevice device, string? deviceName, IntPtr attribs);
+    // Starlight-start: ALCboolean is one byte and device names are UTF-8, the default marshalling got both wrong.
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    [return: MarshalAs(UnmanagedType.U1)]
+    private delegate bool AlcReopenDeviceSoftDelegate(
+        ALDevice device,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string? deviceName,
+        int[] attribs);
+    // Starlight-end
 
     private static TDelegate? LoadAlcDelegate<TDelegate>(string name)
         where TDelegate : Delegate
@@ -387,14 +377,9 @@ internal sealed partial class AudioManager : IAudioInternal
         HrtfId = 0x1996
     }
 
-    private sealed class LoadedAudioSample
+    private sealed class LoadedAudioSample(int bufferHandle)
     {
-        public readonly int BufferHandle;
-
-        public LoadedAudioSample(int bufferHandle)
-        {
-            BufferHandle = bufferHandle;
-        }
+        public readonly int BufferHandle = bufferHandle;
     }
 
     [InterpolatedStringHandler]

@@ -3,6 +3,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading;
 
+// ReSharper disable once CheckNamespace
 namespace Robust.Client.Audio;
 
 internal sealed partial class AudioManager

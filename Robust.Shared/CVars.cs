@@ -15,7 +15,7 @@ namespace Robust.Shared
 {
     /// <seealso cref="CVarDefaultOverrides"/>
     [CVarDefs]
-    public abstract class CVars
+    public abstract partial class CVars // Starlight-edit
     {
         protected CVars()
         {
@@ -709,14 +709,6 @@ namespace Robust.Shared
         public static readonly CVarDef<string> MetricsRuntimeSocket =
             CVarDef.Create("metrics.runtime_socket", "Counters", CVar.SERVERONLY);
 
-        #region Starlight
-        /// <summary>
-        /// Whether to enable granular metrics in the <see cref="SharedUserInterfaceSystem"/>.
-        /// </summary>
-        public static readonly CVarDef<bool> MetricsGranularUiSystem =
-            CVarDef.Create("metrics.granular_ui_system", false, CVar.SERVERONLY);
-        #endregion
-
         /*
          * STATUS
          */
@@ -1073,14 +1065,6 @@ namespace Robust.Shared
         public static readonly CVarDef<int> AuthMode =
             CVarDef.Create("auth.mode", (int) Network.AuthMode.Required, CVar.SERVERONLY);
 
-        #region Starlight
-        /// <summary>
-        /// Mode with which to handle ADDITIONAL authentication on the server.
-        /// </summary>
-        public static readonly CVarDef<int> AdditionalAuthMode =
-            CVarDef.Create("auth.additionalmode", (int)Network.AdditionalAuthModes.Disabled, CVar.SERVERONLY);
-        #endregion
-
         /// <summary>
         /// Allow unauthenticated localhost connections, even if the auth mode is set to required.
         /// These connections have a "localhost@" prefix as username.
@@ -1106,17 +1090,6 @@ namespace Robust.Shared
         /// </summary>
         public static readonly CVarDef<float> AuthGuestTrust =
             CVarDef.Create("auth.guesttrust", 0f, CVar.SERVERONLY);
-
-        #region Starlight
-
-        // Only respected on server, client goes through IAuthManager for security.
-        /// <summary>
-        /// Authentication server address for discord.
-        /// </summary>
-        public static readonly CVarDef<string> StarlightAPIServer =
-            CVarDef.Create("auth.starlightapiserver", AuthManager.DefaultStarlightAPI, CVar.SERVERONLY);
-
-        #endregion
 
         /*
          * RENDERING
