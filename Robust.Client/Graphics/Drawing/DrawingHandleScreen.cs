@@ -189,7 +189,10 @@ public abstract class DrawingHandleScreen(Texture white) : DrawingHandleBase(whi
         return advanceTotal;
     }
 
-    public static Vector2 GetDimensions(Font font, ReadOnlySpan<char> str, float scale) // Starlight-edit
+    public Vector2 GetDimensions(Font font, ReadOnlySpan<char> str, float scale)
+        => MeasureString(font, str, scale);
+
+    internal static Vector2 MeasureString(Font font, ReadOnlySpan<char> str, float scale)
     {
         var baseLine = new Vector2(0f, font.GetAscent(scale));
         var lineHeight = font.GetLineHeight(scale);

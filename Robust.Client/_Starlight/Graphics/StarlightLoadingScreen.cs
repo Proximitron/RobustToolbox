@@ -241,7 +241,7 @@ internal sealed class StarlightLoadingScreen
         if (_titleFont == null)
             return center.Y;
 
-        var dims = DrawingHandleScreen.GetDimensions(_titleFont, FallbackTitle, scale);
+        var dims = DrawingHandleScreen.MeasureString(_titleFont, FallbackTitle, scale);
         var titlePos = new Vector2(center.X - dims.X / 2, center.Y - dims.Y - 40 * scale) + offset;
         DrawGlow(screen, titlePos + dims / 2, dims.X * 0.7f, AccentColor.WithAlpha(0.14f * glowPulse * fade));
         screen.DrawString(_titleFont, titlePos, FallbackTitle, scale, TextColor.WithAlpha(fade));
@@ -317,7 +317,7 @@ internal sealed class StarlightLoadingScreen
         var textY = outer.Bottom + 8 * scale;
 
         var percent = $"{(int) MathF.Floor(_displayedProgress * 100)}%";
-        var percentDims = DrawingHandleScreen.GetDimensions(_textFont, percent, scale);
+        var percentDims = DrawingHandleScreen.MeasureString(_textFont, percent, scale);
         screen.DrawString(_textFont, new Vector2(outer.Right - percentDims.X, textY), percent, scale, TextColor.WithAlpha(fade));
 
         var label = string.IsNullOrEmpty(status) ? "Loading" : status;
@@ -351,8 +351,8 @@ internal sealed class StarlightLoadingScreen
         if (_badgeFont == null)
             return;
 
-        var prefixDims = DrawingHandleScreen.GetDimensions(_badgeFont, BadgePrefix, scale);
-        var nameDims = DrawingHandleScreen.GetDimensions(_badgeFont, BadgeName, scale);
+        var prefixDims = DrawingHandleScreen.MeasureString(_badgeFont, BadgePrefix, scale);
+        var nameDims = DrawingHandleScreen.MeasureString(_badgeFont, BadgeName, scale);
 
         var padX = 10 * scale;
         var padY = 5 * scale;
@@ -502,13 +502,13 @@ internal sealed class StarlightLoadingScreen
 
     private static string Ellipsize(Font font, string text, float scale, float maxWidth)
     {
-        if (DrawingHandleScreen.GetDimensions(font, text, scale).X <= maxWidth)
+        if (DrawingHandleScreen.MeasureString(font, text, scale).X <= maxWidth)
             return text;
 
         for (var len = text.Length - 1; len > 0; len--)
         {
             var candidate = string.Concat(text.AsSpan(0, len), "...");
-            if (DrawingHandleScreen.GetDimensions(font, candidate, scale).X <= maxWidth)
+            if (DrawingHandleScreen.MeasureString(font, candidate, scale).X <= maxWidth)
                 return candidate;
         }
 
