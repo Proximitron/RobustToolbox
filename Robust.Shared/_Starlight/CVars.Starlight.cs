@@ -51,4 +51,11 @@ public abstract partial class CVars
     /// </summary>
     public static readonly CVarDef<int> ReplayCheckpointsResident =
         CVarDef.Create("replay.checkpoints_resident", 3, CVar.CLIENTONLY);
+
+    /// <summary>
+    /// Fixes vertex colors passed through <c>DrawPrimitives</c> (circles, polygons, gradients) being converted from
+    /// sRGB to linear twice, which made them come out much darker than the requested color.
+    /// </summary>
+    public static readonly CVarDef<bool> DisplayPrimitiveColorFix =
+        CVarDef.Create("display.primitive_color_fix", true, CVar.CLIENTONLY | CVar.ARCHIVE);
 }

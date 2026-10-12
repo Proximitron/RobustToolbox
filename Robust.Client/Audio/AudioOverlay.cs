@@ -82,7 +82,7 @@ public sealed class AudioOverlay : Overlay
             output.AppendLine($"- Reference distance: {comp.ReferenceDistance:0.00}");
             output.AppendLine($"- Max distance: {comp.MaxDistance:0.00}");
             var outputText = output.ToString().Trim();
-            var dimensions = screenHandle.GetDimensions(_font, outputText, 1f);
+            var dimensions = DrawingHandleScreen.GetDimensions(_font, outputText, 1f); // Starlight-edit
             var buffer = new Vector2(3f, 3f);
             screenHandle.DrawRect(new UIBox2(screenPos - buffer, screenPos + dimensions + buffer), new Color(39, 39, 48));
             screenHandle.DrawString(_font, screenPos, outputText);

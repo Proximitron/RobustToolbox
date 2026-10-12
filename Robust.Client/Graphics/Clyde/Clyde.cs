@@ -123,6 +123,7 @@ namespace Robust.Client.Graphics.Clyde
             _cfg.OnValueChanged(CVars.MaxLightCount, MaxLightsChanged, true);
             _cfg.OnValueChanged(CVars.MaxOccluderCount, MaxOccludersChanged, true);
             _cfg.OnValueChanged(CVars.RenderTileEdges, RenderTileEdgesChanges, true);
+            _cfg.OnValueChanged(CVars.DisplayPrimitiveColorFix, b => _primitiveColorFix = b, true); // Starlight-edit
             // I can't be bothered to tear down and set these threads up in a cvar change handler.
 
             // Windows and Linux can be trusted to not explode with threaded windowing,
@@ -376,13 +377,15 @@ namespace Robust.Client.Graphics.Clyde
         {
             // Quad drawing.
             {
-                Span<Vertex2D> quadVertices = stackalloc[]
-                {
+                // Starlight-start
+                Span<Vertex2D> quadVertices =
+                [
                     new Vertex2D(1, 0, 1, 1, Color.White),
                     new Vertex2D(0, 0, 0, 1, Color.White),
                     new Vertex2D(1, 1, 1, 0, Color.White),
                     new Vertex2D(0, 1, 0, 0, Color.White)
-                };
+                ];
+                // Starlight-end
 
                 QuadVBO = new GLBuffer<Vertex2D>(this, BufferTarget.ArrayBuffer, BufferUsageHint.StaticDraw,
                     quadVertices,
@@ -395,13 +398,15 @@ namespace Robust.Client.Graphics.Clyde
 
             // Window VBO
             {
-                Span<Vertex2D> winVertices = stackalloc[]
-                {
+                // Starlight-start
+                Span<Vertex2D> winVertices =
+                [
                     new Vertex2D(-1, 1, 0, 1, Color.White),
                     new Vertex2D(-1, -1, 0, 0, Color.White),
                     new Vertex2D(1, 1, 1, 1, Color.White),
                     new Vertex2D(1, -1, 1, 0, Color.White),
-                };
+                ];
+                // Starlight-end
 
                 WindowVBO = new GLBuffer<Vertex2D>(
                     this,

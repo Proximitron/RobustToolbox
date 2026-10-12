@@ -8,6 +8,7 @@ using System.Linq;
 using System.Reflection;
 using System.Text;
 using System.Threading.Tasks;
+using Robust.Shared._Starlight.Utility;
 using Robust.Shared.IoC;
 using Robust.Shared.Log;
 using Robust.Shared.Network;
@@ -114,7 +115,7 @@ namespace Robust.Shared.Serialization.Manager
                 }
             }
 
-            Parallel.ForEach(_reflectionManager.FindAllTypes(), type =>
+            LoadingPump.RunBlocking(() => Parallel.ForEach(_reflectionManager.FindAllTypes(), type => // Starlight-edit
             {
                 var meansDef = false;
                 foreach (var meansAttr in meansDataDef)
@@ -148,12 +149,12 @@ namespace Robust.Shared.Serialization.Manager
                     if (meansRecord)
                         records[type] = 0;
                 }
-            });
+            })); // Starlight-edit
 
             var sawmill = Logger.GetSawmill(LogCategory);
             _serializerSawmill = Logger.GetSawmill("szr");
 
-            Parallel.ForEach(registrations, type =>
+            LoadingPump.RunBlocking(() => Parallel.ForEach(registrations, type => // Starlight-edit
             {
                 if (type.IsAbstract || type.IsInterface || type.IsGenericTypeDefinition)
                 {
@@ -174,7 +175,7 @@ namespace Robust.Shared.Serialization.Manager
                 }
 
                 _dataDefinitions.GetOrAdd(type, static (t, s) => s.Item1.CreateDataDefinition(t, s.isRecord), (this, isRecord));
-            });
+            })); // Starlight-edit
 
             var duplicateErrors = new StringBuilder();
             var invalidIncludes = new StringBuilder();

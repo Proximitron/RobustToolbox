@@ -107,7 +107,10 @@ internal sealed partial class LoadingScreenManager : ILoadingScreenManager
         else
             _sawmill.Error($"Could not load font: {FontLocation}");
 
-        _starlightScreen.Initialize(_resourceCache, _sawmill); // Starlight
+        // Starlight-start
+        _starlightScreen.Initialize(_resourceCache, _sawmill);
+        StarlightInitialize();
+        // Starlight-end
     }
 
     public void BeginLoadingSection(string sectionName) => BeginLoadingSection(sectionName, false);
@@ -190,6 +193,7 @@ internal sealed partial class LoadingScreenManager : ILoadingScreenManager
 
         _clyde.MainWindow.SetWindowProgress(WindowProgressState.None, 1);
 
+        StarlightFinish(); // Starlight-edit
         _finished = true;
     }
 
@@ -210,8 +214,10 @@ internal sealed partial class LoadingScreenManager : ILoadingScreenManager
         if (!string.IsNullOrEmpty(_splashLogo) && _resourceCache.TryGetResource<TextureResource>(_splashLogo, out var logoResource))
             logo = logoResource.Texture;
 
+        StarlightOnFrame();
         var progress = _numberOfLoadingSections > 0 ? _currentSection / (float) _numberOfLoadingSections : 0f;
-        _starlightScreen.Draw(handle, screenSize, scale, logo, _showLoadingBar ? progress : 0f, _currentSectionName);
+        var sectionEnd = _numberOfLoadingSections > 0 ? (_currentSection + 1) / (float) _numberOfLoadingSections : 0f;
+        _starlightScreen.Draw(handle, screenSize, scale, logo, _showLoadingBar ? progress : 0f, _showLoadingBar ? sectionEnd : 0f, _currentSectionName);
 
         if (_showDebug)
         {

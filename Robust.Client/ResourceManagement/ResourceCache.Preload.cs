@@ -10,6 +10,7 @@ using Robust.Client.Graphics;
 using Robust.Client.Graphics.Clyde;
 using Robust.Client.Utility;
 using Robust.Shared;
+using Robust.Shared._Starlight.Utility;
 using Robust.Shared.Collections;
 using Robust.Shared.Configuration;
 using Robust.Shared.ContentPack;
@@ -33,7 +34,7 @@ namespace Robust.Client.ResourceManagement
         [Dependency] private ILogManager _logManager = default!;
         [Dependency] private IConfigurationManager _configurationManager = default!;
 
-        private readonly List<SpriteComponent> _toDeserialize = new();
+        private readonly List<SpriteComponent> _toDeserialize = []; // Starlight-edit
 
         public void PreloadTextures()
         {
@@ -99,13 +100,13 @@ namespace Robust.Client.ResourceManagement
             var sw = Stopwatch.StartNew();
             var resList = GetTypeData<TextureResource>().Resources;
 
-            var texList = _manager.ContentFindFiles("/Textures/")
-                // Skip PNG files inside RSIs.
+            var texList = LoadingPump.RunBlocking(() => _manager.ContentFindFiles("/Textures/") // Starlight-edit: enumerating the texture tree is slow, do it off the game thread so the loading screen animates.
+                                                                                                // Skip PNG files inside RSIs.
                 .Where(p => p.Extension == "png" && !p.ToString().Contains(".rsi/") && !resList.ContainsKey(p))
                 .Select(p => new TextureResource.LoadStepData {Path = p})
-                .ToArray();
+                .ToArray()); // Starlight-edit
 
-            Parallel.ForEach(texList, data =>
+            LoadingPump.RunBlocking(() => Parallel.ForEach(texList, data => // Starlight-edit
             {
                 try
                 {
@@ -125,13 +126,14 @@ namespace Robust.Client.ResourceManagement
                     sawmill.Error($"Exception while loading RSI {data.Path}:\n{e}");
                     data.Bad = true;
                 }
-            });
+            })); // Starlight-edit
 
             foreach (var data in texList)
             {
                 if (data.Bad || data.Skip)
                     continue;
 
+                LoadingPump.Tick(); // Starlight-edit
                 try
                 {
                     TextureResource.LoadTexture(Clyde, data);
@@ -181,6 +183,27 @@ namespace Robust.Client.ResourceManagement
                 sw.Elapsed);
         }
 
+        #region Starlight
+        /// <summary>
+        /// Uploads a large texture atlas in stripes to avoid freezing the game for too long.
+        /// </summary>
+        private OwnedTexture UploadAtlasInStripes(Image<Rgba32> image, string name)
+        {
+            const int stripeHeight = 512;
+
+            var texture = Clyde.CreateBlankTexture<Rgba32>((image.Width, image.Height), name);
+            var pixels = image.GetPixelSpan();
+            for (var y = 0; y < image.Height; y += stripeHeight)
+            {
+                var height = Math.Min(stripeHeight, image.Height - y);
+                texture.SetSubImage((0, y), (image.Width, height), pixels.Slice(y * image.Width, height * image.Width));
+                LoadingPump.Tick();
+            }
+
+            return texture;
+        }
+        #endregion
+
         private void PreloadRsis(ISawmill sawmill)
         {
             var sw = Stopwatch.StartNew();
@@ -200,11 +223,11 @@ namespace Robust.Client.ResourceManagement
             if (resList.Count > 0)
                 rsiListEnumerable = rsiListEnumerable.Where(p => !resList.ContainsKey(p));
 
-            var rsiList = rsiListEnumerable
+            var rsiList = LoadingPump.RunBlocking(() => rsiListEnumerable // Starlight-edit: the enumeration is lazy, run it off the game thread.
                 .Select(p => new RSIResource.LoadStepData {Path = p})
-                .ToArray();
+                .ToArray()); // Starlight-edit
 
-            Parallel.For(
+            LoadingPump.RunBlocking(() => Parallel.For( // Starlight-edit
                 0,
                 rsiList.Length,
                 i =>
@@ -222,7 +245,7 @@ namespace Robust.Client.ResourceManagement
                         datum.Bad = true;
                     }
                 }
-            );
+            )); // Starlight-edit
 
             var atlasList = new List<int>();
             var nonAtlasList = new List<int>();
@@ -242,6 +265,7 @@ namespace Robust.Client.ResourceManagement
                 if (data.Bad)
                     continue;
 
+                LoadingPump.Tick(); // Starlight-edit
                 try
                 {
                     RSIResource.LoadTexture(Clyde, ref data);
@@ -357,7 +381,8 @@ namespace Robust.Client.ResourceManagement
                 // This also isn't in the normal FFDH algorithm (obviously) but its close enough.
                 if (currentHeight + insertHeight > maxSize)
                 {
-                    imageAtlases.Add(new Image<Rgba32>(maxSize, currentHeight));
+                    var atlasHeight = currentHeight;
+                    imageAtlases.Add(LoadingPump.RunBlocking(() => new Image<Rgba32>(maxSize, atlasHeight))); // Starlight-edit
                     finalPixels.Add(0);
                     currentHeight = 0;
                     currentAtlasIndex++;
@@ -380,12 +405,16 @@ namespace Robust.Client.ResourceManagement
             }
 
             // This allocation takes a long time.
-            imageAtlases.Add(new Image<Rgba32>(maxSize, currentHeight));
+            // Starlight-start
+            var lastAtlasHeight = currentHeight;
+            imageAtlases.Add(LoadingPump.RunBlocking(() => new Image<Rgba32>(maxSize, lastAtlasHeight)));
+            // Starlight-end
             finalPixels.Add(0);
 
             // Put all textures on the atlases
             foreach (var level in levels)
             {
+                LoadingPump.Tick(); // Starlight-edit
                 foreach (var i in level.RSIList)
                 {
                     ref var rsi = ref rsiList[i];
@@ -402,7 +431,7 @@ namespace Robust.Client.ResourceManagement
                 var imageAtlas = imageAtlases[i];
                 try
                 {
-                    var atlasTexture = Clyde.LoadTextureFromImage(imageAtlas, $"Meta atlas {i}");
+                    var atlasTexture = UploadAtlasInStripes(imageAtlas, $"Meta atlas {i}"); // Starlight-edit
                     finalAtlases.Add(atlasTexture);
 
                     sawmill.Debug($"(Meta atlas {i}) - cropped utilization: {(float)finalPixels[i] / (maxSize * imageAtlas.Height):P2}, fill percentage: {(float)imageAtlas.Height / maxSize:P2}");
@@ -424,7 +453,7 @@ namespace Robust.Client.ResourceManagement
                 }
             }
 
-            Parallel.For(
+            LoadingPump.RunBlocking(() => Parallel.For( // Starlight-edit
                 0,
                 rsiList.Length,
                 i =>
@@ -443,11 +472,12 @@ namespace Robust.Client.ResourceManagement
                         sawmill.Error($"Exception while loading RSI {data.Path}:\n{e}");
                     }
                 }
-            );
+            )); // Starlight-edit
 
             var errors = 0;
             foreach (ref var data in rsiList.AsSpan())
             {
+                LoadingPump.Tick(); // Starlight-edit
                 try
                 {
                     if (data.Bad)
