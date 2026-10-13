@@ -50,7 +50,12 @@ public sealed partial class ReplayLoadManager
 
         // Starlight-start: spill checkpoints to disk instead of keeping them all in RAM.
         var checkpointStore = _confMan.GetCVar(CVars.ReplayCheckpointDiskCache)
-            ? new ReplayCheckpointStore(_serializer, _sawmill, _confMan.GetCVar(CVars.ReplayCheckpointsResident))
+            ? new ReplayCheckpointStore(
+                _serializer,
+                _sawmill,
+                _confMan.GetCVar(CVars.ReplayCheckpointsResident),
+                TryGetCachedImplicitData,
+                _metaId)
             : null;
 
         CheckpointState[] checkpoints;
@@ -60,7 +65,7 @@ public sealed partial class ReplayLoadManager
             (checkpoints, serverTime) = await GenerateCheckpointsAsync(
                 initData,
                 metaData.CVars,
-                StreamHistory(fileReader, totalData, blocks, stats),
+                StreamHistoryParallel(fileReader, totalData, blocks, stats), // Starlight-edit
                 stats,
                 callback,
                 checkpointStore);

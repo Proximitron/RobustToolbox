@@ -227,7 +227,7 @@ public sealed class CheckpointState : IComparable<CheckpointState>
         StorageIndex = storageIndex;
         Tick = tick;
         TimeBase = time;
-        Cvars = cvars.ShallowClone();
+        Cvars = cvars;
         Index = index;
         Detached = new(detached);
     }

@@ -146,10 +146,13 @@ public sealed partial class ReplayLoadManager
         var changedSinceCheckpoint = new HashSet<NetEntity>();
         var deletedSinceCheckpoint = new HashSet<NetEntity>();
 
+        var cvarSnapshot = cvars.ShallowClone();
+        var cvarsDirty = false;
+
         if (store != null)
         {
             var index0 = store.Append(state0.ToSequence, entStates, changedSinceCheckpoint, deletedSinceCheckpoint, [.. state0.PlayerStates.Value]);
-            checkPoints.Add(new CheckpointState(store, index0, state0.ToSequence, timeBase, cvars, 0, detached));
+            checkPoints.Add(new CheckpointState(store, index0, state0.ToSequence, timeBase, cvarSnapshot, 0, detached));
         }
         else
         {
@@ -195,6 +198,19 @@ public sealed partial class ReplayLoadManager
 
             UpdatePlayerStates(curState.PlayerStates.Span, playerStates);
             UpdateEntityStates(curState.EntityStates.Span, entStates, modifiedEntities, ref spawnedTracker, ref stateTracker, detached, changedSinceCheckpoint, deletedSinceCheckpoint); // Starlight-edit
+            // Starlight-start
+            if (!cvarsDirty)
+            {
+                foreach (var msg in curMessages.Messages)
+                {
+                    if (msg is not CvarChangeMsg)
+                        continue;
+
+                    cvarsDirty = true;
+                    break;
+                }
+            }
+            // Starlight-end
             UpdateMessages(curMessages, uploadedFiles, prototypes, cvars, detachQueue, ref timeBase);
             ProcessQueue(curState.ToSequence, detachQueue, detached, entStates);
             UpdateDeletions(curState.EntityDeletions, entStates, detached, modifiedEntities, changedSinceCheckpoint, deletedSinceCheckpoint); // Starlight-edit
@@ -230,17 +246,23 @@ public sealed partial class ReplayLoadManager
             stateTracker = 0;
             ApplyModifiedEntities(entStates, modifiedEntities);
 
-            // Starlight start
+            // Starlight-start
             if (store != null)
             {
+                if (cvarsDirty)
+                {
+                    cvarSnapshot = cvars.ShallowClone();
+                    cvarsDirty = false;
+                }
+
                 var players = playerStates.Values.ToArray();
                 var storeIndex = store.Append(curState.ToSequence, entStates, changedSinceCheckpoint, deletedSinceCheckpoint, players);
-                checkPoints.Add(new CheckpointState(store, storeIndex, curState.ToSequence, timeBase, cvars, i, detached));
+                checkPoints.Add(new CheckpointState(store, storeIndex, curState.ToSequence, timeBase, cvarSnapshot, i, detached));
                 changedSinceCheckpoint.Clear();
                 deletedSinceCheckpoint.Clear();
                 continue;
             }
-            // Starlight end
+            // Starlight-end
 
             var newState = new GameState(GameTick.Zero,
                 curState.ToSequence,
@@ -253,8 +275,13 @@ public sealed partial class ReplayLoadManager
 
         _sawmill.Info($"Finished generating {checkPoints.Count} checkpoints. Elapsed time: {st.Elapsed}. Checkpoint every {(float)serverTime.Count / checkPoints.Count} ticks on average");
         _sawmill.Info($"Checkpoint stats - Spawning: {stats_due_spawned} StateChanges: {stats_due_state} Ticks: {stats_due_ticks}. ");
-        if (store != null) // Starlight
-            _sawmill.Info($"Checkpoints stored {(store.OnDisk ? "on disk" : "in memory")}, {store.BytesWritten / 1024.0 / 1024.0:N1} MB compressed.");
+        // Starlight-start
+        if (store != null)
+        {
+            store.FinishWrites();
+            _sawmill.Info($"Checkpoints stored {(store.OnDisk ? "on disk" : "in memory")}, {store.KeyframeCount} keyframes, {store.BytesWritten / 1024.0 / 1024.0:N1} MB compressed.");
+        }
+        // Starlight-end
         await callback(stats.TotalBlocks, stats.TotalBlocks, LoadingState.ProcessingFiles, false);
         return ([.. checkPoints], serverTime.ToArray()); // Starlight-edit
     }

@@ -48,9 +48,19 @@ public abstract partial class CVars
 
     /// <summary>
     /// How many checkpoints may be resident in memory at once when <see cref="ReplayCheckpointDiskCache"/> is on.
+    /// Each one is a full copy of the world's entity states. The store additionally keeps a decoding cursor at the most
+    /// recently loaded checkpoint, so jumping back to it again is cheap even with 1.
     /// </summary>
     public static readonly CVarDef<int> ReplayCheckpointsResident =
-        CVarDef.Create("replay.checkpoints_resident", 3, CVar.CLIENTONLY);
+        CVarDef.Create("replay.checkpoints_resident", 1, CVar.CLIENTONLY);
+
+    /// <summary>
+    /// Minimum time (in milliseconds) the replay loading job may run per frame before yielding to render the loading
+    /// screen. Content may request a shorter slice (e.g. one 60 FPS frame), which leaves the loader idle for most of
+    /// the time while vsync/rendering runs.
+    /// </summary>
+    public static readonly CVarDef<int> ReplayLoadTimeSlice =
+        CVarDef.Create("replay.load_time_slice_ms", 100, CVar.CLIENTONLY | CVar.ARCHIVE);
 
     /// <summary>
     /// Fixes vertex colors passed through <c>DrawPrimitives</c> (circles, polygons, gradients) being converted from
