@@ -309,15 +309,23 @@ public abstract partial class SharedPhysicsSystem
     private void Solve(float frameTime, float dtRatio, float invDt, bool prediction)
     {
         _islands.Clear();
+        var phaseStart = PhaseTimestamp();
         using (_prof.Group("Build Islands"))
         {
             BuildIslands(prediction);
         }
 
+        phaseStart = AddPhase(PhysicsPhase.BuildIslands, phaseStart);
+
+        if (MetricsEnabled)
+            IslandsGauge.Set(_islands.Count);
+
         using (_prof.Group("Solve Islands"))
         {
             SolveIslands(frameTime, dtRatio, invDt, prediction);
         }
+
+        phaseStart = PhaseTimestamp();
 
         foreach (var island in _islands)
         {
@@ -325,6 +333,7 @@ public abstract partial class SharedPhysicsSystem
         }
 
         Cleanup(frameTime);
+        AddPhase(PhysicsPhase.Cleanup, phaseStart);
     }
 
     private void BuildIslands(bool prediction)
@@ -679,6 +688,8 @@ public abstract partial class SharedPhysicsSystem
             MaxDegreeOfParallelism = _parallel.ParallelProcessCount,
         };
 
+        var phaseStart = PhaseTimestamp();
+
         while (iBegin < islands.Length)
         {
             ref var island = ref islands[iBegin];
@@ -697,6 +708,8 @@ public abstract partial class SharedPhysicsSystem
             SolveIsland(ref island, in data, null, prediction, solvedPositions, solvedAngles, linearVelocities, angularVelocities, sleepStatus);
         });
 
+        phaseStart = AddPhase(PhysicsPhase.SolveIslands, phaseStart);
+
         // Update data sequentially
         for (var i = 0; i < islands.Length; i++)
         {
@@ -705,6 +718,8 @@ public abstract partial class SharedPhysicsSystem
             UpdateBodies(in island, solvedPositions, solvedAngles, linearVelocities, angularVelocities);
             SleepBodies(in island, sleepStatus);
         }
+
+        AddPhase(PhysicsPhase.UpdateBodies, phaseStart);
 
         // Cleanup
         ArrayPool<Vector2>.Shared.Return(solvedPositions);

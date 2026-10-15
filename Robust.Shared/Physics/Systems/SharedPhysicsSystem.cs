@@ -31,14 +31,14 @@ namespace Robust.Shared.Physics.Systems
             "Amount of time spent running a controller's UpdateBeforeSolve", new HistogramConfiguration
             {
                 LabelNames = new[] {"controller"},
-                Buckets = Histogram.ExponentialBuckets(0.000_001, 1.5, 25)
+                Buckets = Histogram.ExponentialBuckets(0.000_001, 1.5, 30)
             });
 
         public static readonly Histogram TickUsageControllerAfterSolveHistogram = Metrics.CreateHistogram("robust_entity_physics_controller_after_solve",
             "Amount of time spent running a controller's UpdateAfterSolve", new HistogramConfiguration
             {
                 LabelNames = new[] {"controller"},
-                Buckets = Histogram.ExponentialBuckets(0.000_001, 1.5, 25)
+                Buckets = Histogram.ExponentialBuckets(0.000_001, 1.5, 30)
             });
 
         [Dependency] private IConfigurationManager _cfg = default!;
@@ -113,6 +113,7 @@ namespace Robust.Shared.Physics.Systems
             SubscribeLocalEvent<PhysicsComponent, ComponentHandleState>(OnPhysicsHandleState);
             InitializeIsland();
             InitializeContacts();
+            InitializeMetrics();
 
             Subs.CVar(_cfg, CVars.AutoClearForces, OnAutoClearChange, true);
             Subs.CVar(_cfg, CVars.NetTickrate, UpdateSubsteps, true);
@@ -258,13 +259,20 @@ namespace Robust.Shared.Physics.Systems
             var frameTime = deltaTime / _substeps;
 
             EffectiveCurTime = _gameTiming.CurTime;
+
+            if (MetricsEnabled)
+                AwakeBodiesGauge.Set(AwakeBodies.Count);
+
             for (int i = 0; i < _substeps; i++)
             {
+                var phaseStart = PhaseTimestamp();
                 var updateBeforeSolve = new PhysicsUpdateBeforeSolveEvent(prediction, frameTime);
                 using (_prof.Group("PreSolve", Color.Green))
                 {
                     RaiseLocalEvent(ref updateBeforeSolve);
                 }
+
+                phaseStart = AddPhase(PhysicsPhase.PreSolve, phaseStart);
 
                 // Find new contacts and (TODO: temporary) update any per-map virtual controllers
 
@@ -274,6 +282,8 @@ namespace Robust.Shared.Physics.Systems
                 {
                     _broadphase.FindNewContacts();
                 }
+
+                phaseStart = AddPhase(PhysicsPhase.Broadphase, phaseStart);
 
                 // TODO PHYSICS Fix Collision Mispredicts
                 // If a physics update induces a position update that brings fixtures into contact, the collision starts in the NEXT tick,
@@ -302,16 +312,21 @@ namespace Robust.Shared.Physics.Systems
                     CollideContacts();
                 }
 
+                AddPhase(PhysicsPhase.Collide, phaseStart);
+
                 using (_prof.Group("Solve", Color.Red))
                 {
                     Step(frameTime, prediction);
                 }
 
+                phaseStart = PhaseTimestamp();
                 var updateAfterSolve = new PhysicsUpdateAfterSolveEvent(prediction, frameTime);
                 using (_prof.Group("PostSolve", Color.Yellow))
                 {
                     RaiseLocalEvent(ref updateAfterSolve);
                 }
+
+                AddPhase(PhysicsPhase.PostSolve, phaseStart);
 
                 // On last substep (or main step where no substeps occured) we'll update all of the lerp data.
                 if (i == _substeps - 1)
@@ -323,6 +338,7 @@ namespace Robust.Shared.Physics.Systems
             }
 
             EffectiveCurTime = null;
+            FlushPhaseMetrics();
         }
 
         protected virtual void FinalStep()
