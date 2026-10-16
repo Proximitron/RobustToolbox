@@ -1,10 +1,6 @@
 using System;
 using System.Buffers;
 using System.Numerics;
-using Robust.Shared.GameObjects;
-using Robust.Shared.Map;
-using Robust.Shared.Maths;
-using Robust.Shared.Physics.Components;
 using Robust.Shared.Physics.Dynamics;
 using Robust.Shared.Physics.Dynamics.Contacts;
 
@@ -17,10 +13,8 @@ namespace Robust.Shared.Physics.Systems;
 
 public abstract partial class SharedPhysicsSystem
 {
-    private const float ClippingRecoverySearchStep = 0.25f;
-    private const int ClippingRecoverySearchRings = 8;
-    private const float ClippingRecoveryFallbackDistance =
-        ClippingRecoverySearchStep * (ClippingRecoverySearchRings + 1);
+    private const float ClippingRecoveryMaxPush = 0.5f;
+
     private const float PersistentRecoveryMaxGravityAlignment = 0.5f;
 
     private void RecoverClippedBodies(
@@ -28,9 +22,11 @@ public abstract partial class SharedPhysicsSystem
         in IslandData island,
         ContactPositionConstraint[] positionConstraints,
         Vector2[] positions,
-        float[] angles)
+        float[] angles,
+        Vector2[] linearVelocities)
     {
         var bodyCount = island.Bodies.Count;
+        var offset = island.Offset;
         var minRecoverySeparation = -MathF.Max(
             3.0f * PhysicsConstants.LinearSlop,
             data.MaxLinearCorrection);
@@ -38,7 +34,9 @@ public abstract partial class SharedPhysicsSystem
         var gravity = Gravity;
         var hasGravity = gravity.LengthSquared() > 0f;
         var gravityDirection = hasGravity ? Vector2.Normalize(gravity) : Vector2.Zero;
-        bool[]? attempted = null;
+
+        float[]? deepest = null;
+        Vector2[]? pushDirs = null;
 
         try
         {
@@ -49,18 +47,23 @@ public abstract partial class SharedPhysicsSystem
                 var indexB = constraint.IndexB;
                 var bodyA = island.Bodies[indexA].Comp1;
                 var bodyB = island.Bodies[indexB].Comp1;
-                var clippedIndex = bodyA.BodyType == BodyType.Dynamic && bodyB.BodyType == BodyType.Static
-                    ? indexA
-                    : bodyB.BodyType == BodyType.Dynamic && bodyA.BodyType == BodyType.Static
-                        ? indexB
-                        : -1;
 
-                if (clippedIndex < 0 || attempted?[clippedIndex] == true)
+                int clippedIndex;
+                if (bodyA.BodyType == BodyType.Dynamic && bodyB.BodyType == BodyType.Static)
+                    clippedIndex = indexA;
+                else if (bodyB.BodyType == BodyType.Dynamic && bodyA.BodyType == BodyType.Static)
+                    clippedIndex = indexB;
+                else
                     continue;
 
-                var bodyEnt = island.Bodies[clippedIndex];
-                var body = bodyEnt.Comp1;
+                var body = clippedIndex == indexA ? bodyA : bodyB;
+                if (body.InvMass <= 0f || !body.CanCollide)
+                    continue;
+
                 var separation = GetContactMinSeparation(in constraint, positions, angles, out var contactNormal);
+                if (contactNormal == Vector2.Zero)
+                    continue;
+
                 var sideContact = !hasGravity ||
                                   MathF.Abs(Vector2.Dot(contactNormal, gravityDirection)) <
                                   PersistentRecoveryMaxGravityAlignment;
@@ -75,142 +78,54 @@ public abstract partial class SharedPhysicsSystem
                 if (separation >= recoverySeparation)
                     continue;
 
-                if (attempted == null)
+                if (deepest == null)
                 {
-                    attempted = ArrayPool<bool>.Shared.Rent(bodyCount);
-                    Array.Clear(attempted, 0, bodyCount);
+                    deepest = ArrayPool<float>.Shared.Rent(bodyCount);
+                    pushDirs = ArrayPool<Vector2>.Shared.Rent(bodyCount);
+                    Array.Clear(deepest, 0, bodyCount);
                 }
 
-                attempted[clippedIndex] = true;
-
-                if (body.InvMass <= 0f || !body.CanCollide ||
-                    !_fixturesQuery.TryGetComponent(bodyEnt.Owner, out var fixtures))
-                {
-                    continue;
-                }
-
-                var xform = bodyEnt.Comp2;
-                var mapId = xform.MapID;
-                if (mapId == MapId.Nullspace)
+                if (separation >= deepest[clippedIndex])
                     continue;
 
-                var position = positions[clippedIndex];
-                var angle = angles[clippedIndex];
-                if (!float.IsFinite(position.X) || !float.IsFinite(position.Y) || !float.IsFinite(angle))
+                deepest[clippedIndex] = separation;
+                pushDirs![clippedIndex] = clippedIndex == indexA ? -contactNormal : contactNormal;
+            }
+
+            if (deepest == null)
+                return;
+
+            for (var i = 0; i < bodyCount; i++)
+            {
+                var separation = deepest[i];
+                if (separation >= 0f)
                     continue;
 
-                if (TryFindClosestNonCollidingPosition(
-                        bodyEnt.Owner,
-                        mapId,
-                        body,
-                        fixtures,
-                        position,
-                        angle,
-                        out var freePosition))
-                {
-                    positions[clippedIndex] = freePosition;
-                }
-                else
-                {
-                    positions[clippedIndex] = position + Direction.South.ToVec() * ClippingRecoveryFallbackDistance;
-                }
+                var position = positions[i];
+                if (!float.IsFinite(position.X) || !float.IsFinite(position.Y))
+                    continue;
+
+                var pushDir = pushDirs![i];
+
+                ref var velocity = ref linearVelocities[offset + i];
+                var intoWall = Vector2.Dot(velocity, pushDir);
+                if (intoWall < 0f)
+                    velocity -= pushDir * intoWall;
+
+                var depth = -separation + PhysicsConstants.LinearSlop;
+                if (depth > ClippingRecoveryMaxPush)
+                    continue;
+
+                positions[i] = position + pushDir * depth;
             }
         }
         finally
         {
-            if (attempted != null)
-                ArrayPool<bool>.Shared.Return(attempted);
-        }
-    }
-
-    private bool TryFindClosestNonCollidingPosition(
-        EntityUid bodyUid,
-        MapId mapId,
-        PhysicsComponent body,
-        FixturesComponent fixtures,
-        Vector2 position,
-        float angle,
-        out Vector2 freePosition)
-    {
-        Func<EntityUid, bool> ignoreBody = uid => uid == bodyUid;
-
-        if (!IsPositionColliding(mapId, body, fixtures, position, angle, ignoreBody))
-        {
-            freePosition = position;
-            return true;
-        }
-
-        for (var ring = 1; ring <= ClippingRecoverySearchRings; ring++)
-        {
-            var distance = ring * ClippingRecoverySearchStep;
-
-            foreach (var direction in DirectionExtensions.AllDirections)
+            if (deepest != null)
             {
-                var candidate = position + direction.ToVec() * distance;
-                if (IsPositionColliding(mapId, body, fixtures, candidate, angle, ignoreBody))
-                    continue;
-
-                freePosition = candidate;
-                return true;
+                ArrayPool<float>.Shared.Return(deepest);
+                ArrayPool<Vector2>.Shared.Return(pushDirs!);
             }
-        }
-
-        freePosition = position;
-        return false;
-    }
-
-    private bool IsPositionColliding(
-        MapId mapId,
-        PhysicsComponent body,
-        FixturesComponent fixtures,
-        Vector2 position,
-        float angle,
-        Func<EntityUid, bool> ignoreBody)
-    {
-        var bodyTransform = new Transform(angle);
-        bodyTransform.Position = position - Physics.Transform.Mul(bodyTransform.Quaternion2D, body.LocalCenter);
-
-        foreach (var fixture in fixtures.Fixtures.Values)
-        {
-            if (!fixture.Hard || (fixture.CollisionLayer == 0 && fixture.CollisionMask == 0))
-                continue;
-
-            var query = new FixtureQueryArgs(
-                new QueryFilter
-                {
-                    LayerBits = fixture.CollisionLayer,
-                    MaskBits = fixture.CollisionMask,
-                    Flags = QueryFlags.Dynamic | QueryFlags.Static,
-                    IsIgnored = ignoreBody
-                },
-                Approximate: false);
-
-            for (var childIndex = 0; childIndex < fixture.Shape.ChildCount; childIndex++)
-            {
-                var colliding = false;
-                _lookup.ForEachFixtureIntersecting(
-                    mapId,
-                    fixture.Shape,
-                    childIndex,
-                    bodyTransform,
-                    ref colliding,
-                    new AnyFixtureOverlapCallback(),
-                    query);
-
-                if (colliding)
-                    return true;
-            }
-        }
-
-        return false;
-    }
-
-    private readonly struct AnyFixtureOverlapCallback : IFixtureQueryCallback<bool>
-    {
-        public bool Invoke(ref bool state, in FixtureProxy fixture)
-        {
-            state = true;
-            return false;
         }
     }
 

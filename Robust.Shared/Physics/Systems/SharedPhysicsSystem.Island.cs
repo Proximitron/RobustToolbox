@@ -923,7 +923,7 @@ public abstract partial class SharedPhysicsSystem
         }
 
         if (!contactsOkay) // Starlight
-            RecoverClippedBodies(in data, in island, positionConstraints, positions, angles); // Starlight
+            RecoverClippedBodies(in data, in island, positionConstraints, positions, angles, linearVelocities); // Starlight
 
         // Transform the solved positions back into local terms
         // This means we can run the entire solver in parallel and not have to worry about stale world positions later
