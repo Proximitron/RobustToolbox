@@ -140,6 +140,11 @@ namespace Robust.Client.Graphics.Clyde
 
             InitKeys();
 
+            // Starlight-start: RenderDoc has to be in the process before the GL context exists.
+            if (_cfg.GetCVar(CVars.DisplayRenderDoc))
+                RenderDoc.TryLoad(_clydeSawmill);
+            // Starlight-end
+
             return InitWindowing();
         }
 

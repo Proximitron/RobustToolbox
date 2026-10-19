@@ -68,4 +68,12 @@ public abstract partial class CVars
     /// </summary>
     public static readonly CVarDef<bool> DisplayPrimitiveColorFix =
         CVarDef.Create("display.primitive_color_fix", true, CVar.CLIENTONLY | CVar.ARCHIVE);
+
+    /// <summary>
+    /// Load RenderDoc into the client before the window and GL context are created, so frames can be captured
+    /// with its hotkey (F12 / Print Screen) or the <c>renderdoc_capture</c> command. Read once at startup.
+    /// The library is taken from <c>ROBUST_RENDERDOC_PATH</c>, else from the default RenderDoc install.
+    /// </summary>
+    public static readonly CVarDef<bool> DisplayRenderDoc =
+        CVarDef.Create("display.renderdoc", false, CVar.CLIENTONLY);
 }
