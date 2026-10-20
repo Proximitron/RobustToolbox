@@ -287,6 +287,13 @@ namespace Robust.Shared.Network
                     };
                 }
 
+                // Starlight-start
+                userData = userData with { StarlightClientVersion = msgLogin.StarlightClientVersion };
+                _authLogger.Info("{0}: {1} connected with {2} client (starlight version {3})",
+                    connection.RemoteEndPoint, userData.UserName,
+                    userData.IsStarlightClient ? "Starlight" : "official", userData.StarlightClientVersion);
+                // Starlight-end
+
                 _logger.Verbose(
                     $"{connection.RemoteEndPoint}: Login type: {type}");
 

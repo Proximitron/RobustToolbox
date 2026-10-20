@@ -46,6 +46,14 @@ namespace Robust.Shared.Network
         /// </summary>
         public bool IsLocal { get; init; }
 
+        // Starlight-start
+        [ViewVariables]
+        public byte StarlightClientVersion { get; init; }
+
+        [ViewVariables]
+        public bool IsStarlightClient => StarlightClientVersion > 0;
+        // Starlight-end
+
         public NetUserData(NetUserId userId, string userName)
         {
             UserId = userId;
