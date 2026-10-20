@@ -1,7 +1,9 @@
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.Numerics;
 using System.Runtime.InteropServices;
+using Robust.Client._Starlight.Graphics;
 using Robust.Client.GameObjects;
 using Robust.Shared.GameObjects;
 using Robust.Shared.Maths;
@@ -268,11 +270,10 @@ namespace Robust.Client.Graphics.Clyde
                     return;
                 }
 
-                DrawEntityRaw(entity, position, scale, worldRot.Value, eyeRot, overrideDirection, sprite);
+                DrawEntityRaw(position, scale, worldRot.Value, eyeRot, overrideDirection, sprite);
             }
 
             private void DrawEntityRaw(
-                EntityUid entity,
                 Vector2 position,
                 Vector2 scale,
                 Angle worldRot,
@@ -337,7 +338,7 @@ namespace Robust.Client.Graphics.Clyde
                 if (screenScale.X == 0 || screenScale.Y == 0 ||
                     !_clyde._currentRenderTarget.Instance.TryGetTarget(out var finalTarget))
                 {
-                    DrawEntityRaw(entity, position, scale, worldRot, eyeRot, overrideDirection, sprite);
+                    DrawEntityRaw(position, scale, worldRot, eyeRot, overrideDirection, sprite); // Starlight-edit
                     return;
                 }
 
@@ -364,7 +365,7 @@ namespace Robust.Client.Graphics.Clyde
 
                 if (entityPostRenderTarget == null)
                 {
-                    DrawEntityRaw(entity, position, scale, worldRot, eyeRot, overrideDirection, sprite);
+                    DrawEntityRaw(position, scale, worldRot, eyeRot, overrideDirection, sprite); // Starlight-edit
                     return;
                 }
 
@@ -379,7 +380,7 @@ namespace Robust.Client.Graphics.Clyde
                     {
                         if (finalTarget is not RenderTexture screenTarget)
                         {
-                            DrawEntityRaw(entity, position, scale, worldRot, eyeRot, overrideDirection, sprite);
+                            DrawEntityRaw(position, scale, worldRot, eyeRot, overrideDirection, sprite); // Starlight-edit
                             return;
                         }
 
@@ -387,7 +388,7 @@ namespace Robust.Client.Graphics.Clyde
                         var screenTexture = _clyde.CopyScreenTexture(screenTarget);
                         if (screenTexture == null)
                         {
-                            DrawEntityRaw(entity, position, scale, worldRot, eyeRot, overrideDirection, sprite);
+                            DrawEntityRaw(position, scale, worldRot, eyeRot, overrideDirection, sprite); // Starlight-edit
                             return;
                         }
 
@@ -403,7 +404,7 @@ namespace Robust.Client.Graphics.Clyde
                     Viewport(Box2i.FromDimensions(Vector2i.Zero, entityPostRenderTarget.Size));
 
                     var sourcePosition = finalPosition + entityPostRenderTarget.Size / 2f - spriteScreenBounds.Center;
-                    DrawEntityRaw(entity, sourcePosition, scale, worldRot, eyeRot, overrideDirection, sprite, false);
+                    DrawEntityRaw(sourcePosition, scale, worldRot, eyeRot, overrideDirection, sprite, false); // Starlight-edit
 
                     var oldProj = _clyde._currentMatrixProj;
                     var oldView = _clyde._currentMatrixView;
@@ -499,40 +500,53 @@ namespace Robust.Client.Graphics.Clyde
             public void DrawPrimitives(DrawPrimitiveTopology primitiveTopology, Texture texture,
                 ReadOnlySpan<DrawVertexUV2DColor> vertices)
             {
-                if (!(texture is ClydeTexture clydeTexture))
+                if (texture is not ClydeTexture clydeTexture)
                 {
                     throw new ArgumentException("Texture must be a basic texture.");
                 }
 
-                var castSpan = MemoryMarshal.Cast<DrawVertexUV2DColor, Vertex2D>(vertices);
+                // Starlight-start
+                var fixedVertices = _clyde.PrimitiveColorsForShader(vertices, out var rented);
+                var castSpan = MemoryMarshal.Cast<DrawVertexUV2DColor, Vertex2D>(fixedVertices);
+                // Starlight-end
 
                 _clyde.DrawPrimitives(primitiveTopology, clydeTexture.TextureId, castSpan);
+                // Starlight-start
+                if (rented != null)
+                    ArrayPool<DrawVertexUV2DColor>.Shared.Return(rented);
+                // Starlight-end
             }
+
+            #region Starlight
+            public float GetPixelScale() => _clyde.DrawGetPixelScale();
+            #endregion
 
             public void DrawPrimitives(DrawPrimitiveTopology primitiveTopology, Texture texture,
                 ReadOnlySpan<ushort> indices,
                 ReadOnlySpan<DrawVertexUV2DColor> vertices)
             {
-                if (!(texture is ClydeTexture clydeTexture))
+                if (texture is not ClydeTexture clydeTexture) // Starlight-edit
                 {
                     throw new ArgumentException("Texture must be a basic texture.");
                 }
 
-                var castSpan = MemoryMarshal.Cast<DrawVertexUV2DColor, Vertex2D>(vertices);
+                // Starlight-start
+                var fixedVertices = _clyde.PrimitiveColorsForShader(vertices, out var rented);
+                var castSpan = MemoryMarshal.Cast<DrawVertexUV2DColor, Vertex2D>(fixedVertices);
+                // Starlight-end
 
                 _clyde.DrawPrimitives(primitiveTopology, clydeTexture.TextureId, indices, castSpan);
+                // Starlight-start
+                if (rented != null)
+                    ArrayPool<DrawVertexUV2DColor>.Shared.Return(rented);
+                // Starlight-end
             }
 
             // ---- (end) ----
 
-            private sealed class DrawingHandleScreenImpl : DrawingHandleScreen
+            private sealed class DrawingHandleScreenImpl(Texture white, Clyde.RenderHandle renderHandle) : DrawingHandleScreen(white) // Starlight-edit
             {
-                private readonly RenderHandle _renderHandle;
-
-                public DrawingHandleScreenImpl(Texture white, RenderHandle renderHandle) : base(white)
-                {
-                    _renderHandle = renderHandle;
-                }
+                private readonly RenderHandle _renderHandle = renderHandle; // Starlight-edit
 
                 public override void SetTransform(in Matrix3x2 matrix)
                 {
@@ -584,10 +598,20 @@ namespace Robust.Client.Graphics.Clyde
                     }
                     else
                     {
-                        DrawLine(rect.TopLeft, rect.TopRight, color);
-                        DrawLine(rect.TopRight, rect.BottomRight, color);
-                        DrawLine(rect.BottomRight, rect.BottomLeft, color);
-                        DrawLine(rect.BottomLeft, rect.TopLeft, color);
+                        // Starlight-start
+                        var transform = GetTransform();
+                        var scale = MathF.Max(
+                            new Vector2(transform.M11, transform.M12).Length(),
+                            new Vector2(transform.M21, transform.M22).Length());
+                        var t = MathF.Min(1f / MathF.Max(scale, 0.0001f), MathF.Min(MathF.Abs(rect.Width), MathF.Abs(rect.Height)) / 2);
+                        if (!(t > 0))
+                            return;
+
+                        DrawTextureRect(White, new UIBox2(rect.Left, rect.Top, rect.Right, rect.Top + t), color);
+                        DrawTextureRect(White, new UIBox2(rect.Left, rect.Bottom - t, rect.Right, rect.Bottom), color);
+                        DrawTextureRect(White, new UIBox2(rect.Left, rect.Top + t, rect.Left + t, rect.Bottom - t), color);
+                        DrawTextureRect(White, new UIBox2(rect.Right - t, rect.Top + t, rect.Right, rect.Bottom - t), color);
+                        // Starlight-end
                     }
                 }
 
@@ -640,14 +664,9 @@ namespace Robust.Client.Graphics.Clyde
                 }
             }
 
-            private sealed class DrawingHandleWorldImpl : DrawingHandleWorld
+            private sealed class DrawingHandleWorldImpl(Texture white, Clyde.RenderHandle renderHandle) : DrawingHandleWorld(white) // Starlight-edit
             {
-                private readonly RenderHandle _renderHandle;
-
-                public DrawingHandleWorldImpl(Texture white, RenderHandle renderHandle) : base(white)
-                {
-                    _renderHandle = renderHandle;
-                }
+                private readonly RenderHandle _renderHandle = renderHandle; // Starlight-edit
 
                 public override void SetTransform(in Matrix3x2 matrix)
                 {
@@ -671,38 +690,10 @@ namespace Robust.Client.Graphics.Clyde
 
                 public override void DrawCircle(Vector2 position, float radius, Color color, bool filled = true)
                 {
-                    int divisions = Math.Max(16,(int)(radius * 16));
-                    float arcLength = MathF.PI * 2 / divisions;
-
-                    var colorReal = color * Modulate;
-
-                    if (filled)
-                    {
-                        // Unfilled (using _renderHandle.DrawLine) does the linear conversion internally.
-                        // Filled meanwhile uses DrawPrimitives, so has to do it here.
-                        colorReal = Color.FromSrgb(color);
-                    }
-
-                    Span<DrawVertexUV2DColor> filledTriangle = stackalloc DrawVertexUV2DColor[3];
-
-                    // Draws a "circle", but its just a polygon with a bunch of sides
-                    // this is the GL_LINES version, not GL_LINE_STRIP
-                    for (int i = 0; i < divisions; i++)
-                    {
-                        var startPos = new Vector2(MathF.Cos(arcLength * i) * radius, MathF.Sin(arcLength * i) * radius);
-                        var endPos = new Vector2(MathF.Cos(arcLength * (i+1)) * radius, MathF.Sin(arcLength * (i + 1)) * radius);
-
-                        if(!filled)
-                            _renderHandle.DrawLine(startPos + position, endPos + position, colorReal);
-                        else
-                        {
-                            filledTriangle[0] = new DrawVertexUV2DColor(startPos + position, colorReal);
-                            filledTriangle[1] = new DrawVertexUV2DColor(endPos + position, colorReal);
-                            filledTriangle[2] = new DrawVertexUV2DColor(position, colorReal);
-
-                            _renderHandle.DrawPrimitives(DrawPrimitiveTopology.TriangleList, White, filledTriangle);
-                        }
-                    }
+                    // Starlight-start
+                    var segments = CircleGeometry.SegmentCount(radius * _renderHandle.GetPixelScale());
+                    CircleGeometry.Draw(this, position, radius, color, filled, segments);
+                    // Starlight-end
                 }
 
                 public override void DrawLine(Vector2 from, Vector2 to, Color color)

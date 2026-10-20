@@ -24,34 +24,29 @@ namespace Robust.Client.Replays.Loading;
 /// </remarks>
 public sealed class BufferedReplayDataProvider : IReplayDataProvider
 {
+    #region Starlight
     /// <summary>
     /// Describes where a contiguous run of ticks lives: which file and the index range it covers.
     /// </summary>
-    public readonly struct BlockMeta
+    public readonly struct BlockMeta(ResPath fileName, int start, int count)
     {
-        public readonly ResPath FileName;
-        public readonly int Start;
-        public readonly int Count;
-
-        public BlockMeta(ResPath fileName, int start, int count)
-        {
-            FileName = fileName;
-            Start = start;
-            Count = count;
-        }
+        public readonly ResPath FileName = fileName;
+        public readonly int Start = start;
+        public readonly int Count = count;
     }
 
-    private sealed class LoadedBlock
+    private sealed class LoadedBlock(GameState[] states, ReplayMessage[] messages)
     {
-        public readonly GameState[] States;
-        public readonly ReplayMessage[] Messages;
-
-        public LoadedBlock(GameState[] states, ReplayMessage[] messages)
-        {
-            States = states;
-            Messages = messages;
-        }
+        public readonly GameState[] States = states;
+        public readonly ReplayMessage[] Messages = messages;
     }
+
+    /// <summary>
+    /// Extra resource (e.g. the checkpoint store) whose lifetime is tied to this provider.
+    /// </summary>
+    internal IDisposable? OwnedResource { get; init; }
+
+    #endregion
 
     private readonly IReplayFileReader _fileReader;
     private readonly IRobustSerializer _serializer;
@@ -60,9 +55,9 @@ public sealed class BufferedReplayDataProvider : IReplayDataProvider
     private readonly int[] _blockStarts; // parallel to _blocks, for binary search
     private readonly int _maxLoadedBlocks;
 
-    private readonly Dictionary<int, LoadedBlock> _loaded = new();
-    private readonly Dictionary<int, LinkedListNode<int>> _lruNodes = new();
-    private readonly LinkedList<int> _lru = new(); // most-recently-used at the front
+    private readonly Dictionary<int, LoadedBlock> _loaded = []; // Starlight-edit
+    private readonly Dictionary<int, LinkedListNode<int>> _lruNodes = []; // Starlight-edit
+    private readonly LinkedList<int> _lru = []; // most-recently-used at the front // Starlight-edit
 
     private bool _disposed;
 
@@ -203,5 +198,6 @@ public sealed class BufferedReplayDataProvider : IReplayDataProvider
         _lruNodes.Clear();
         _lru.Clear();
         _fileReader.Dispose();
+        OwnedResource?.Dispose(); // Starlight-edit
     }
 }

@@ -7,6 +7,7 @@ using System.Reflection;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
+using Robust.Shared._Starlight.Utility;
 using Robust.Shared.Asynchronous;
 using Robust.Shared.Collections;
 using Robust.Shared.ContentPack;
@@ -38,12 +39,12 @@ namespace Robust.Shared.Prototypes
         [Dependency] private IEntityManager _entMan = default!;
         [Dependency] private IRobustRandom _random = default!;
 
-        private readonly Dictionary<string, FrozenDictionary<string, MappingDataNode>> _prototypeDataCache = new();
+        private readonly Dictionary<string, FrozenDictionary<string, MappingDataNode>> _prototypeDataCache = []; // Starlight-edit
 
-        private readonly Dictionary<string, MappingDataNode> _tempMappingData = new();
+        private readonly Dictionary<string, MappingDataNode> _tempMappingData = []; // Starlight-edit
 
-        private readonly Dictionary<string, Type> _kindNames = new();
-        private readonly Dictionary<Type, int> _kindPriorities = new();
+        private readonly Dictionary<string, Type> _kindNames = []; // Starlight-edit
+        private readonly Dictionary<Type, int> _kindPriorities = []; // Starlight-edit
 
         protected ISawmill Sawmill = default!;
 
@@ -54,7 +55,7 @@ namespace Robust.Shared.Prototypes
 
         private FrozenDictionary<Type, KindData> _kinds = FrozenDictionary<Type, KindData>.Empty;
 
-        private readonly HashSet<string> _ignoredPrototypeTypes = new();
+        private readonly HashSet<string> _ignoredPrototypeTypes = []; // Starlight-edit
 
         public virtual void Initialize()
         {
@@ -306,7 +307,7 @@ namespace Robust.Shared.Prototypes
                 x => x.Value.Instances.Keys.ToHashSet());
 
             ReloadPrototypeKinds();
-            Dictionary<Type, HashSet<string>> prototypes = new();
+            Dictionary<Type, HashSet<string>> prototypes = []; // Starlight-edit
             LoadDefaultPrototypes(prototypes);
 
             foreach (var (kind, ids) in prototypes)
@@ -580,7 +581,7 @@ namespace Robust.Shared.Prototypes
             foreach (var kind in kinds)
             {
                 if (inheritanceTasks.TryGetValue(kind.Type, out var task))
-                    task.Wait();
+                    LoadingPump.Wait(task); // Starlight-edit
             }
 
             // Process all prototypes in this group in a single parallel operation.
@@ -606,18 +607,26 @@ namespace Robust.Shared.Prototypes
 
             // On the game thread: process AfterDeserialization hooks from the channel.
             var channelReader = hooksChannel.Reader;
-#pragma warning disable RA0004
-            while (channelReader.WaitToReadAsync().AsTask().Result)
-#pragma warning restore RA0004
+            // Starlight-start: wait through LoadingPump so the loading screen keeps animating.
+            while (true)
             {
+                var waitTask = channelReader.WaitToReadAsync().AsTask();
+                LoadingPump.Wait(waitTask);
+#pragma warning disable RA0004
+                if (!waitTask.Result)
+                    break;
+#pragma warning restore RA0004
+
                 while (channelReader.TryRead(out var hooks))
                 {
                     hooks.AfterDeserialization();
+                    LoadingPump.Tick();
                 }
             }
 
             // Join task in case an exception was raised.
-            instantiateTask.Wait();
+            LoadingPump.Wait(instantiateTask);
+            // Starlight-end
         }
 
         private void InstantiatePrototypes(
@@ -758,17 +767,13 @@ namespace Robust.Shared.Prototypes
             // _sawmill.Debug($"Inheritance {kind}: {sw.Elapsed}");
         }
 
-        private sealed class InheritancePushDatum
+        // Starlight-start
+        private sealed class InheritancePushDatum(MappingDataNode result, int countParentsRemaining)
         {
-            public MappingDataNode Result;
-            public int CountParentsRemaining;
-
-            public InheritancePushDatum(MappingDataNode result, int countParentsRemaining)
-            {
-                Result = result;
-                CountParentsRemaining = countParentsRemaining;
-            }
+            public MappingDataNode Result = result;
+            public int CountParentsRemaining = countParentsRemaining;
         }
+        // Starlight-end
 
         #endregion IPrototypeManager members
 
@@ -1061,15 +1066,9 @@ namespace Robust.Shared.Prototypes
             if (!(typeof(IPrototype).IsAssignableFrom(kind)))
                 throw new InvalidOperationException("Type must implement IPrototype.");
 
-            var attribute = (PrototypeAttribute?)Attribute.GetCustomAttribute(kind, typeof(PrototypeAttribute));
-
-            if (attribute == null)
-            {
-                throw new InvalidImplementationException(kind,
+            var attribute = (PrototypeAttribute?)Attribute.GetCustomAttribute(kind, typeof(PrototypeAttribute)) ?? throw new InvalidImplementationException(kind, // Starlight-edit
                     typeof(IPrototype),
                     "No " + nameof(PrototypeAttribute) + " to give it a type string.");
-            }
-
             var name = attribute.Type ?? CalculatePrototypeName(kind);
 
             if (_ignoredPrototypeTypes.Contains(name))
@@ -1176,27 +1175,27 @@ namespace Robust.Shared.Prototypes
 
             public FrozenDictionary<string, IPrototype> Instances = FrozenDictionary<string, IPrototype>.Empty;
 
-            public Dictionary<string, MappingDataNode> Results = new();
+            public Dictionary<string, MappingDataNode> Results = []; // Starlight-edit
 
             /// <summary>
             /// Variant of <see cref="Results"/> prior to inheritance pushing. If the kind does not have inheritance,
             /// then this is just the same dictionary.
             /// </summary>
-            public readonly Dictionary<string, MappingDataNode> RawResults = new();
+            public readonly Dictionary<string, MappingDataNode> RawResults = []; // Starlight-edit
 
             /// <summary>
             /// The original mapping before it was modified by a partial prototype.
             /// This will not have an element for a given ID if there are no partial prototypes
             /// affecting that ID.
             /// </summary>
-            public readonly Dictionary<string, MappingDataNode> PartialOriginals = new();
+            public readonly Dictionary<string, MappingDataNode> PartialOriginals = []; // Starlight-edit
 
             /// <summary>
             /// The original mapping before it was modified by a partial prototype.
             /// This will not have an element for a given ID if there are no partial prototypes
             /// affecting that ID.
             /// </summary>
-            public readonly Dictionary<string, List<(ExtractedMappingData Data, ResPath? File)>> Partials = new();
+            public readonly Dictionary<string, List<(ExtractedMappingData Data, ResPath? File)>> Partials = []; // Starlight-edit
 
             /// <summary>
             /// The unfrozen instance of <see cref="Variants"/>.
@@ -1221,7 +1220,7 @@ namespace Robust.Shared.Prototypes
             /// </summary>
             public object InstancesDirect = default!;
 
-            private MethodInfo _freezeDirectInfo = typeof(KindData)
+            private readonly MethodInfo _freezeDirectInfo = typeof(KindData) // Starlight-edit
                 .GetMethod(nameof(FreezeDirect), BindingFlags.Instance | BindingFlags.NonPublic)!
                 .MakeGenericMethod(kind);
 

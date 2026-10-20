@@ -151,9 +151,27 @@ public sealed class ReplayData : IDisposable
 /// </summary>
 public sealed class CheckpointState : IComparable<CheckpointState>
 {
-    public GameTick Tick => State.ToSequence;
+    #region Starlight
+    private readonly IReplayCheckpointLoader? _loader;
+    private GameState? _fullState;
+    private GameState? _attachedStates;
+    private EntityState[]? _detachedStates;
 
-    public readonly GameState FullState;
+    /// <summary>
+    /// Index of this checkpoint inside its <see cref="IReplayCheckpointLoader"/>.
+    /// </summary>
+    internal readonly int StorageIndex;
+
+    public GameTick Tick { get; }
+
+    public GameState FullState
+    {
+        get
+        {
+            EnsureLoaded();
+            return _fullState!;
+        }
+    }
 
     public GameState State => AttachedStates ?? FullState;
 
@@ -169,9 +187,74 @@ public sealed class CheckpointState : IComparable<CheckpointState>
     /// ONLY entity B gets deleted. The client will not receive the new transform state for entity A, and if we blindly
     /// apply the full set of the most recent server states it will cause entity A to throw errors.
     /// </remarks>
-    public readonly GameState? AttachedStates;
+    public GameState? AttachedStates
+    {
+        get
+        {
+            EnsureLoaded();
+            return _attachedStates;
+        }
+    }
 
-    public EntityState[]? DetachedStates;
+    public EntityState[]? DetachedStates
+    {
+        get
+        {
+            EnsureLoaded();
+            return _detachedStates;
+        }
+        set => _detachedStates = value;
+    }
+
+    /// <summary>
+    /// Whether the (potentially large) game state of this checkpoint is currently resident in memory.
+    /// </summary>
+    internal bool IsLoaded => _fullState != null;
+
+    /// <summary>
+    /// Creates a checkpoint whose game state lives in <paramref name="loader"/> and is only loaded when accessed.
+    /// </summary>
+    internal CheckpointState(
+        IReplayCheckpointLoader loader,
+        int storageIndex,
+        GameTick tick,
+        (TimeSpan, GameTick) time,
+        Dictionary<string, object> cvars,
+        int index,
+        HashSet<NetEntity> detached)
+    {
+        _loader = loader;
+        StorageIndex = storageIndex;
+        Tick = tick;
+        TimeBase = time;
+        Cvars = cvars;
+        Index = index;
+        Detached = new(detached);
+    }
+
+    private void EnsureLoaded()
+    {
+        if (_fullState != null || _loader == null)
+            return;
+
+        var state = _loader.Load(this);
+        DebugTools.AssertEqual(state.ToSequence, Tick);
+        SetState(state, Detached.Count == 0 ? null : new HashSet<NetEntity>(Detached));
+    }
+
+    /// <summary>
+    /// Drops the in-memory copy of the game state. It will be re-loaded from the loader on next access.
+    /// </summary>
+    internal void Unload()
+    {
+        if (_loader == null)
+            return;
+
+        _fullState = null;
+        _attachedStates = null;
+        _detachedStates = null;
+    }
+    #endregion
 
     public readonly (TimeSpan, GameTick) TimeBase;
     public readonly int Index;
@@ -185,31 +268,40 @@ public sealed class CheckpointState : IComparable<CheckpointState>
         int index,
         HashSet<NetEntity> detached)
     {
-        FullState = state;
         TimeBase = time;
         Cvars = cvars.ShallowClone();
         Index = index;
-        Detached = new(detached);
+    // Starlight-start
+        Detached = [.. detached];
+        Tick = state.ToSequence;
+        SetState(state, detached);
+    }
+    private void SetState(GameState state, HashSet<NetEntity>? detached)
+    {
+        _fullState = state;
+        _attachedStates = null;
+        _detachedStates = null;
 
-        if (Detached.Count == 0)
+        if (detached == null || Detached.Count == 0)
             return;
+    // Starlight end
 
         var attachedStates = new EntityState[state.EntityStates.Value.Count - Detached.Count];
-        DetachedStates = new EntityState[Detached.Count];
+        _detachedStates = new EntityState[Detached.Count]; // Starlight-edit
 
         int i = 0, j = 0;
         foreach (var entState in state.EntityStates.Span)
         {
             if (detached.Contains(entState.NetEntity))
-                DetachedStates[i++] = entState;
+                _detachedStates[i++] = entState; // Starlight-edit
             else
                 attachedStates[j++] = entState;
 
         }
-        DebugTools.Assert(i == DetachedStates.Length);
+        DebugTools.Assert(i == _detachedStates.Length);
         DebugTools.Assert(j == attachedStates.Length);
 
-        AttachedStates = new GameState(
+        _attachedStates = new GameState(
             state.FromSequence,
             state.ToSequence,
             state.LastProcessedInput,
@@ -229,15 +321,27 @@ public sealed class CheckpointState : IComparable<CheckpointState>
     private CheckpointState(int index)
     {
         Index = index;
-        FullState = default!;
         TimeBase = default!;
         Cvars = default!;
         Detached = default!;
-        AttachedStates = default;
     }
 
     public int CompareTo(CheckpointState? other) => Index.CompareTo(other?.Index ?? -1);
 }
+
+#region Starlight
+/// <summary>
+/// Backing storage for lazily loaded <see cref="CheckpointState"/>s.
+/// </summary>
+internal interface IReplayCheckpointLoader
+{
+    /// <summary>
+    /// Load the full game state of the given checkpoint.
+    /// </summary>
+    GameState Load(CheckpointState checkpoint);
+}
+
+#endregion
 
 /// <summary>
 /// Collection of all networked messages and variables that were sent in a given tick.

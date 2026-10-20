@@ -1,4 +1,8 @@
+using System;
+using Robust.Shared;
+using Robust.Shared.Configuration;
 using Robust.Shared.ContentPack;
+using Robust.Shared.IoC;
 using System.Threading.Tasks;
 using Robust.Shared.CPUJob.JobQueues;
 using Robust.Shared.Utility;
@@ -23,6 +27,11 @@ public class LoadReplayJob : Job<bool>
     {
         _fileReader = fileReader;
         _loadMan = loadMan;
+
+        // Starlight-start: content passes a single 60 FPS frame, which leaves the loader idle half the time.
+        var minSlice = IoCManager.Resolve<IConfigurationManager>().GetCVar(CVars.ReplayLoadTimeSlice) / 1000.0;
+        MaxTime = Math.Max(MaxTime, minSlice);
+        // Starlight-end
     }
 
     protected override async Task<bool> Process()

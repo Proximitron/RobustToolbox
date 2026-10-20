@@ -20,21 +20,15 @@ namespace Robust.Client.Replays.Loading;
 // so that when jumping to tick 1001 the client only has to apply states for tick 1000 and 1001, instead of 0, 1, 2, ...
 public sealed partial class ReplayLoadManager
 {
+    #region Starlight
     // Scratch data used by UpdateEntityStates.
     // Avoids copying changes for every change to an entity between checkpoints, instead copies once per checkpoint on
     // first change. We can also use this to avoid building a dictionary of ComponentChange inside the inner loop.
-    private sealed class UpdateScratchData
+    private sealed class UpdateScratchData(EntityState oldEntState)
     {
-        public Dictionary<ushort, ComponentChange> Changes;
-        public EntityState lastChange;
-        public HashSet<ushort>? netComps;
-
-        public UpdateScratchData(EntityState oldEntState)
-        {
-            Changes = oldEntState.ComponentChanges.Value.ToDictionary(x => x.NetID);
-            lastChange = oldEntState;
-            netComps = oldEntState.NetComponents;
-        }
+        public Dictionary<ushort, ComponentChange> Changes = oldEntState.ComponentChanges.Value.ToDictionary(x => x.NetID);
+        public EntityState lastChange = oldEntState;
+        public HashSet<ushort>? netComps = oldEntState.NetComponents;
 
         public EntityState BakeChanges()
         {
@@ -45,12 +39,15 @@ public sealed partial class ReplayLoadManager
         }
     }
 
+    #endregion
+
     private async Task<(CheckpointState[], TimeSpan[])> GenerateCheckpointsAsync(
         ReplayMessage? initMessages,
         HashSet<string> initialCvars,
         IEnumerable<(GameState State, ReplayMessage Messages)> history,
         HistoryStreamStats stats,
-        LoadReplayCallback callback)
+        LoadReplayCallback callback,
+        ReplayCheckpointStore? store = null) // Starlight-edit
     {
         // Given a set of states [0 to X], [X to X+1], [X+1 to X+2]..., this method  will generate additional states
         // like [0 to x+60 ], [0 to x+120], etc. This will make scrubbing/jumping to a state much faster, but requires
@@ -83,7 +80,7 @@ public sealed partial class ReplayLoadManager
         var st = new Stopwatch();
         st.Start();
 
-        Dictionary<string, object> cvars = new();
+        Dictionary<string, object> cvars = [];
         foreach (var cvar in initialCvars)
         {
             cvars[cvar] = _confMan.GetCVar<object>(cvar);
@@ -113,7 +110,7 @@ public sealed partial class ReplayLoadManager
             }
         }
 
-        HashSet<ResPath> uploadedFiles = new();
+        HashSet<ResPath> uploadedFiles = [];
         var detached = new HashSet<NetEntity>();
         var detachQueue = new Dictionary<GameTick, List<NetEntity>>();
 
@@ -145,7 +142,23 @@ public sealed partial class ReplayLoadManager
             entStates.Values.ToArray(),
             playerStates.Values.ToArray(),
             Array.Empty<NetEntity>());
-        checkPoints.Add(new CheckpointState(state0, timeBase, cvars, 0, detached));
+        // Starlight start
+        var changedSinceCheckpoint = new HashSet<NetEntity>();
+        var deletedSinceCheckpoint = new HashSet<NetEntity>();
+
+        var cvarSnapshot = cvars.ShallowClone();
+        var cvarsDirty = false;
+
+        if (store != null)
+        {
+            var index0 = store.Append(state0.ToSequence, entStates, changedSinceCheckpoint, deletedSinceCheckpoint, [.. state0.PlayerStates.Value]);
+            checkPoints.Add(new CheckpointState(store, index0, state0.ToSequence, timeBase, cvarSnapshot, 0, detached));
+        }
+        else
+        {
+            checkPoints.Add(new CheckpointState(state0, timeBase, cvars, 0, detached));
+        }
+        // Starlight end
 
         DebugTools.Assert(state0.EntityDeletions.Value.Count == 0);
         var empty = Array.Empty<NetEntity>();
@@ -184,10 +197,23 @@ public sealed partial class ReplayLoadManager
             DebugTools.Assert(curState.FromSequence <= lastState.ToSequence);
 
             UpdatePlayerStates(curState.PlayerStates.Span, playerStates);
-            UpdateEntityStates(curState.EntityStates.Span, entStates, modifiedEntities, ref spawnedTracker, ref stateTracker, detached);
+            UpdateEntityStates(curState.EntityStates.Span, entStates, modifiedEntities, ref spawnedTracker, ref stateTracker, detached, changedSinceCheckpoint, deletedSinceCheckpoint); // Starlight-edit
+            // Starlight-start
+            if (!cvarsDirty)
+            {
+                foreach (var msg in curMessages.Messages)
+                {
+                    if (msg is not CvarChangeMsg)
+                        continue;
+
+                    cvarsDirty = true;
+                    break;
+                }
+            }
+            // Starlight-end
             UpdateMessages(curMessages, uploadedFiles, prototypes, cvars, detachQueue, ref timeBase);
             ProcessQueue(curState.ToSequence, detachQueue, detached, entStates);
-            UpdateDeletions(curState.EntityDeletions, entStates, detached, modifiedEntities);
+            UpdateDeletions(curState.EntityDeletions, entStates, detached, modifiedEntities, changedSinceCheckpoint, deletedSinceCheckpoint); // Starlight-edit
             serverTime.Add(GetTime(curState.ToSequence) - initialTime);
             ticksSinceLastCheckpoint++;
 
@@ -220,6 +246,24 @@ public sealed partial class ReplayLoadManager
             stateTracker = 0;
             ApplyModifiedEntities(entStates, modifiedEntities);
 
+            // Starlight-start
+            if (store != null)
+            {
+                if (cvarsDirty)
+                {
+                    cvarSnapshot = cvars.ShallowClone();
+                    cvarsDirty = false;
+                }
+
+                var players = playerStates.Values.ToArray();
+                var storeIndex = store.Append(curState.ToSequence, entStates, changedSinceCheckpoint, deletedSinceCheckpoint, players);
+                checkPoints.Add(new CheckpointState(store, storeIndex, curState.ToSequence, timeBase, cvarSnapshot, i, detached));
+                changedSinceCheckpoint.Clear();
+                deletedSinceCheckpoint.Clear();
+                continue;
+            }
+            // Starlight-end
+
             var newState = new GameState(GameTick.Zero,
                 curState.ToSequence,
                 default,
@@ -231,8 +275,15 @@ public sealed partial class ReplayLoadManager
 
         _sawmill.Info($"Finished generating {checkPoints.Count} checkpoints. Elapsed time: {st.Elapsed}. Checkpoint every {(float)serverTime.Count / checkPoints.Count} ticks on average");
         _sawmill.Info($"Checkpoint stats - Spawning: {stats_due_spawned} StateChanges: {stats_due_state} Ticks: {stats_due_ticks}. ");
+        // Starlight-start
+        if (store != null)
+        {
+            store.FinishWrites();
+            _sawmill.Info($"Checkpoints stored {(store.OnDisk ? "on disk" : "in memory")}, {store.KeyframeCount} keyframes, {store.BytesWritten / 1024.0 / 1024.0:N1} MB compressed.");
+        }
+        // Starlight-end
         await callback(stats.TotalBlocks, stats.TotalBlocks, LoadingState.ProcessingFiles, false);
-        return (checkPoints.ToArray(), serverTime.ToArray());
+        return ([.. checkPoints], serverTime.ToArray()); // Starlight-edit
     }
 
     private void ProcessQueue(
@@ -375,24 +426,36 @@ public sealed partial class ReplayLoadManager
         _locMan.ReloadLocalizations();
     }
 
-    private void UpdateDeletions(NetListAsArray<NetEntity> entityDeletions,
-        Dictionary<NetEntity, EntityState> entStates, HashSet<NetEntity> detached, Dictionary<NetEntity, UpdateScratchData> modifiedEntities)
+    private static void UpdateDeletions(NetListAsArray<NetEntity> entityDeletions, // Starlight-edit
+        Dictionary<NetEntity, EntityState> entStates, HashSet<NetEntity> detached, Dictionary<NetEntity, UpdateScratchData> modifiedEntities,
+        HashSet<NetEntity> changedSinceCheckpoint, HashSet<NetEntity> deletedSinceCheckpoint) // Starlight-edit
     {
         foreach (var ent in entityDeletions.Span)
         {
             entStates.Remove(ent);
             detached.Remove(ent);
             modifiedEntities.Remove(ent);
+
+            // Starlight-start
+            changedSinceCheckpoint.Remove(ent);
+            deletedSinceCheckpoint.Add(ent);
+            // Starlight-end
         }
     }
 
     private void UpdateEntityStates(ReadOnlySpan<EntityState> span, Dictionary<NetEntity, EntityState> entStates,
         Dictionary<NetEntity, UpdateScratchData> modified,
-        ref int spawnedTracker, ref int stateTracker, HashSet<NetEntity> detached)
+        ref int spawnedTracker, ref int stateTracker, HashSet<NetEntity> detached,
+        HashSet<NetEntity> changedSinceCheckpoint, HashSet<NetEntity> deletedSinceCheckpoint)
     {
         foreach (var entState in span)
         {
             detached.Remove(entState.NetEntity);
+
+            // Starlight
+            changedSinceCheckpoint.Add(entState.NetEntity);
+            deletedSinceCheckpoint.Remove(entState.NetEntity);
+
             if (!entStates.TryGetValue(entState.NetEntity, out var oldEntState))
             {
                 var modifiedState = AddImplicitData(entState);
@@ -409,8 +472,7 @@ public sealed partial class ReplayLoadManager
             }
 
             // Get scratch versions (with write access) for entities modified since last checkpoint
-            UpdateScratchData? scratch;
-            if (!modified.TryGetValue(entState.NetEntity, out scratch))
+            if (!modified.TryGetValue(entState.NetEntity, out UpdateScratchData? scratch))
             {
                 scratch = new UpdateScratchData(oldEntState);
                 modified[entState.NetEntity] = scratch;
@@ -434,7 +496,7 @@ public sealed partial class ReplayLoadManager
         }
     }
 
-    private void ApplyModifiedEntities(Dictionary<NetEntity, EntityState> entStates, Dictionary<NetEntity, UpdateScratchData> modifiedEntities)
+    private static void ApplyModifiedEntities(Dictionary<NetEntity, EntityState> entStates, Dictionary<NetEntity, UpdateScratchData> modifiedEntities) // Starlight-edit
     {
         foreach (var modified in modifiedEntities)
         {
@@ -444,7 +506,7 @@ public sealed partial class ReplayLoadManager
         modifiedEntities.Clear();
     }
 
-    private void UpdateScratch(
+    private static void UpdateScratch( // Starlight-edit
         EntityState newState,
         Dictionary<ushort, ComponentChange> oldState)
     {
@@ -464,7 +526,7 @@ public sealed partial class ReplayLoadManager
             {
                 // This is a new component
                 // I'm not 100% sure about this, but I think delta states should always be full states here?
-                DebugTools.Assert(newCompState.State is not IComponentDeltaState newDelta);
+                DebugTools.Assert(newCompState.State is not IComponentDeltaState);
                 oldState[newCompState.NetID] = newCompState;
                 continue;
             }
@@ -481,7 +543,7 @@ public sealed partial class ReplayLoadManager
         }
     }
 
-    private EntityState MergeStates(
+    private static EntityState MergeStates( // Starlight-edit
         EntityState newState,
         IReadOnlyCollection<ComponentChange> oldState,
         HashSet<ushort>? oldNetComps)
@@ -527,7 +589,7 @@ public sealed partial class ReplayLoadManager
         return new EntityState(newState.NetEntity, combined, newState.EntityLastModified, newState.NetComponents ?? oldNetComps);
     }
 
-    private void UpdatePlayerStates(ReadOnlySpan<SessionState> span, Dictionary<NetUserId, SessionState> playerStates)
+    private static void UpdatePlayerStates(ReadOnlySpan<SessionState> span, Dictionary<NetUserId, SessionState> playerStates) // Starlight-edit
     {
         foreach (var player in span)
         {

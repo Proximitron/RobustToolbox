@@ -50,12 +50,14 @@ internal partial class AudioManager
         _cfg.UnsubValueChanged(CVars.AudioMasterVolume, SetMasterGain);
         _cfg.UnsubValueChanged(CVars.AudioMuteUnfocused, OnMuteUnfocusedChanged);
         _cfg.UnsubValueChanged(CVars.AudioDevice, OnAudioDeviceChanged);
+        ShutdownStarlight(); // Starlight
 
         DisposeAllAudio();
 
         if (_openALContext != ALContext.Null)
         {
             ALC.MakeContextCurrent(ALContext.Null);
+            HasCurrentContext = false; // Starlight
 
             ALC.DestroyContext(_openALContext);
         }
@@ -86,12 +88,14 @@ internal partial class AudioManager
         // Default orientation: at: (0, 0, -1)  up: (0, 1, 0)
         var at = new OpenTK.Mathematics.Vector3(0f, 0f, -1f);
         var up = new OpenTK.Mathematics.Vector3(vec.Y, vec.X, 0f);
-        AL.Listener(ALListenerfv.Orientation, new []{0, 0, -1, vec.X, vec.Y, 0});
+        // Starlight-edit: dropped an extra Orientation call (array alloc every audio tick) that this one overwrote anyway.
         AL.Listener(ALListenerfv.Orientation, ref at, ref up);
     }
 
     public void FrameUpdate(float frameTime)
     {
+        StarlightFrameUpdate(frameTime); // Starlight
+
         if (MathF.Abs(FadeGain - _masterFadeTargetGain) < 0.001f)
             return;
 
@@ -106,6 +110,10 @@ internal partial class AudioManager
         if (stream.ClydeHandle == null)
             return;
 
+        // Starlight: the buffer died with an older device, its id may belong to a different sound now.
+        if (stream.DeviceGeneration != DeviceGeneration)
+            return;
+
         if (!_audioSampleBuffers.Remove(stream.BufferId))
         {
             return;
@@ -118,6 +126,16 @@ internal partial class AudioManager
     public AudioStream LoadAudioOggVorbis(Stream stream, string? name = null)
     {
         var vorbis = AudioLoaderOgg.LoadAudioData(stream);
+
+        // Starlight-start: downmix surround files instead of failing to load them.
+        if (vorbis.Channels > 2)
+        {
+            var stereo = AudioConversion.DownmixToStereo(vorbis.Data.Span, (int) vorbis.Channels, AudioConversion.ChannelOrder.Vorbis);
+            var raw = LoadAudioRaw(stereo, 2, (int) vorbis.SampleRate, name);
+            return new AudioStream(this, raw.BufferId, raw.ClydeHandle, raw.Length, 2, name, vorbis.Title, vorbis.Artist);
+        }
+
+        // Starlight-end
 
         var buffer = AL.GenBuffer();
 
@@ -150,7 +168,7 @@ internal partial class AudioManager
         _checkAlError();
 
         var handle = new ClydeHandle(_audioSampleBuffers.Count);
-        _audioSampleBuffers.Add(buffer, new LoadedAudioSample(buffer));
+        _audioSampleBuffers.TryAdd(buffer, new LoadedAudioSample(buffer)); // Starlight-edit: without a context every buffer is 0.
         var length = TimeSpan.FromSeconds(vorbis.TotalSamples / (double) vorbis.SampleRate);
         return new AudioStream(this, buffer, handle, length, (int) vorbis.Channels, name, vorbis.Title, vorbis.Artist);
     }
@@ -159,6 +177,25 @@ internal partial class AudioManager
     public AudioStream LoadAudioWav(Stream stream, string? name = null)
     {
         var wav = AudioLoaderWav.LoadAudioData(stream);
+
+        // Starlight-start: surround, 24/32-bit and float wavs get converted instead of throwing.
+        if (wav.NumChannels > 2
+            || wav.AudioType != AudioLoaderWav.WavAudioFormatType.PCM
+            || wav.BitsPerSample is not (8 or 16))
+        {
+            var pcm = AudioConversion.WavToPcm16(wav);
+            var channels = (int) wav.NumChannels;
+            if (channels > 2)
+            {
+                pcm = AudioConversion.DownmixToStereo(pcm, channels, AudioConversion.ChannelOrder.Wave);
+                channels = 2;
+            }
+
+            var raw = LoadAudioRaw(pcm, channels, wav.SampleRate, name);
+            return raw;
+        }
+
+        // Starlight-end
 
         var buffer = AL.GenBuffer();
 
@@ -209,7 +246,7 @@ internal partial class AudioManager
         _checkAlError();
 
         var handle = new ClydeHandle(_audioSampleBuffers.Count);
-        _audioSampleBuffers.Add(buffer, new LoadedAudioSample(buffer));
+        _audioSampleBuffers.TryAdd(buffer, new LoadedAudioSample(buffer)); // Starlight-edit: without a context every buffer is 0.
         var length = TimeSpan.FromSeconds(wav.Data.Length / (double) wav.BlockAlign / wav.SampleRate);
         return new AudioStream(this, buffer, handle, length, wav.NumChannels, name);
     }
@@ -240,7 +277,7 @@ internal partial class AudioManager
 
         var handle = new ClydeHandle(_audioSampleBuffers.Count);
         var length = TimeSpan.FromSeconds((double) samples.Length / channels / sampleRate);
-        _audioSampleBuffers.Add(buffer, new LoadedAudioSample(buffer));
+        _audioSampleBuffers.TryAdd(buffer, new LoadedAudioSample(buffer)); // Starlight-edit: without a context every buffer is 0.
         return new AudioStream(this, buffer, handle, length, channels, name);
     }
 
@@ -305,16 +342,17 @@ internal partial class AudioManager
                 AL.DistanceModel(ALDistanceModel.ExponentDistanceClamped);
                 break;
             default:
-                throw new ArgumentOutOfRangeException($"No implementation to set {attenuation.ToString()} for DistanceModel!");
+                throw new ArgumentOutOfRangeException($"No implementation to set {attenuation} for DistanceModel!"); // Starlight-edit
         }
 
         _attenuation = attenuation;
-        OpenALSawmill.Info($"Set audio attenuation to {attenuation.ToString()}");
+        OpenALSawmill.Info($"Set audio attenuation to {attenuation}"); // Starlight-edit
     }
 
     public void SetDopplerFactor(float factor)
     {
         factor = Math.Max(factor, 0f);
+        _dopplerFactor = factor; // Starlight-edit
         AL.DopplerFactor(factor);
         OpenALSawmill.Info($"Set doppler factor to {factor:F2}");
     }
@@ -331,6 +369,15 @@ internal partial class AudioManager
 
     public IAudioSource? CreateAudioSource(AudioStream stream)
     {
+        // Starlight-start: streams from before a device rebuild that weren't reloaded (raw audio) have no buffer.
+        if (stream.DeviceGeneration != DeviceGeneration
+            || !_audioSampleBuffers.TryGetValue(stream.BufferId, out var sample))
+        {
+            OpenALSawmill.Warning("Tried to play audio stream '{0}' whose buffer is gone (audio device was re-created).", stream.Name);
+            return null;
+        }
+        // Starlight-end
+
         var source = AL.GenSource();
 
         if (!AL.IsSource(source))
@@ -341,7 +388,7 @@ internal partial class AudioManager
 
         // ReSharper disable once PossibleInvalidOperationException
         // TODO: This really shouldn't be indexing based on the ClydeHandle...
-        AL.Source(source, ALSourcei.Buffer, _audioSampleBuffers[stream.BufferId].BufferHandle);
+        AL.Source(source, ALSourcei.Buffer, sample.BufferHandle); // Starlight-edit
 
         var audioSource = new AudioSource(this, source, stream);
         _audioSources.Add(source, new WeakReference<BaseAudioSource>(audioSource));

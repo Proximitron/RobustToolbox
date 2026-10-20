@@ -114,7 +114,7 @@ internal sealed partial class PvsSystem : EntitySystem
         "Amount of time spent processing different parts of the game state update", new HistogramConfiguration
         {
             LabelNames = new[] {"area"},
-            Buckets = Histogram.ExponentialBuckets(0.000_001, 1.5, 25)
+            Buckets = Histogram.ExponentialBuckets(0.000_001, 1.5, 30)
         });
 
     public override void Initialize()

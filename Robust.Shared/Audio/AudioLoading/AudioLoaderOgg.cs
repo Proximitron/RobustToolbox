@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Numerics;
 using NVorbis;
@@ -82,6 +82,10 @@ internal static class AudioLoaderOgg
         // because it's -32768 -> 32767
         // Can't be arsed though
         var factor = new Vector<float>(short.MaxValue);
+        // Starlight-start
+        var min = new Vector<float>(-1f);
+        var max = Vector<float>.One;
+        // Starlight-end
 
         ref readonly var srcBase = ref src[0];
         ref var dstBase = ref dst[0];
@@ -91,8 +95,10 @@ internal static class AudioLoaderOgg
             var lower = Vector.LoadUnsafe(in srcBase, (nuint) i);
             var upper = Vector.LoadUnsafe(in srcBase, (nuint) (i + Vector<float>.Count));
 
-            lower *= factor;
-            upper *= factor;
+            // Starlight-start
+            lower = Vector.Min(Vector.Max(lower, min), max) * factor;
+            upper = Vector.Min(Vector.Max(upper, min), max) * factor;
+            // Starlight-end
 
             var lowerInt = Vector.ConvertToInt32(lower);
             var upperInt = Vector.ConvertToInt32(upper);
@@ -104,7 +110,7 @@ internal static class AudioLoaderOgg
 
         for (var i = simdSamples; i < src.Length; i++)
         {
-            dst[i] = (short)(src[i] * short.MaxValue);
+            dst[i] = (short)(Math.Clamp(src[i], -1f, 1f) * short.MaxValue); // Starlight-edit
         }
     }
 

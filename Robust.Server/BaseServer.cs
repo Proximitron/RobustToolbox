@@ -71,7 +71,7 @@ namespace Robust.Server
             new HistogramConfiguration
             {
                 LabelNames = new[] { "area" },
-                Buckets = Histogram.ExponentialBuckets(0.000_01, 2, 13)
+                Buckets = Histogram.ExponentialBuckets(0.000_01, 2, 15)
             });
 
         [Dependency] private INetConfigurationManagerInternal _config = default!;

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using Robust.Client.GameStates;
 using Robust.Shared;
@@ -15,7 +16,25 @@ public sealed partial class ReplayLoadManager
     /// <summary>
     ///     Cached implicit entity states.
     /// </summary>
-    private Dictionary<string, (List<ComponentChange>, HashSet<ushort>)> _implicitData = new();
+    private readonly ConcurrentDictionary<string, (List<ComponentChange>, HashSet<ushort>)> _implicitData = new(); // Starlight-edit: concurrent, the checkpoint store reads it from worker threads.
+
+    #region Starlight
+    /// <summary>
+    /// Looks up already generated implicit data without spawning anything. Safe to call from worker threads.
+    /// </summary>
+    private bool TryGetCachedImplicitData(string prototype, out List<ComponentChange> states, out HashSet<ushort> netComps)
+    {
+        if (_implicitData.TryGetValue(prototype, out var data))
+        {
+            (states, netComps) = data;
+            return true;
+        }
+
+        states = default!;
+        netComps = default!;
+        return false;
+    }
+    #endregion
 
     private EntityState AddImplicitData(EntityState entState)
     {

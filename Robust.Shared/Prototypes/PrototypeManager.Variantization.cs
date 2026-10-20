@@ -70,7 +70,7 @@ public partial class PrototypeManager
 
         if (newNode == null)
         {
-            throw new PrototypeLoadException($"DataNode {variantNodeName} does not contain variantization data for index {variantIndex.ToString()}. " +
+            throw new PrototypeLoadException($"DataNode {variantNodeName} does not contain variantization data for index {variantIndex}. " + // Starlight-edit
                 $"Check that all '{CreateVariantsTag}' nodes in the prototype are formatted correctly and their fields all have the same array length.");
         }
 
@@ -83,19 +83,19 @@ public partial class PrototypeManager
     /// </summary>
     /// <param name="kind">The prototype kind.</param>
     /// <param name="collectionVariants">A list of prototype variants derived from the same source prototype.</param>
-    private void RegisterVariantCollection(KindData kindData, List<string> collectionVariants)
+    private static void RegisterVariantCollection(KindData kindData, List<string> collectionVariants) // Starlight-edit
     {
-        if (kindData.UnfrozenVariants == null)
+        // Starlight-start
+        lock (kindData)
         {
-            kindData.UnfrozenVariants = kindData.Variants.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.ToList());
-        }
+            kindData.UnfrozenVariants ??= kindData.Variants.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.ToList());
 
-        kindData.UnfrozenVariants.EnsureCapacity(kindData.UnfrozenVariants.Count + collectionVariants.Count);
+            kindData.UnfrozenVariants.EnsureCapacity(kindData.UnfrozenVariants.Count + collectionVariants.Count);
 
-        foreach (var collectionMember in collectionVariants)
-        {
-            kindData.UnfrozenVariants[collectionMember] = collectionVariants;
+            foreach (var collectionMember in collectionVariants)
+                kindData.UnfrozenVariants[collectionMember] = collectionVariants;
         }
+        // Starlight-end
     }
 
     /// <summary>
@@ -114,7 +114,7 @@ public partial class PrototypeManager
         if (!collectionKind.Variants.TryGetValue(collectionMember, out var collectionVariantNames))
             return false;
 
-        collectionVariants = new();
+        collectionVariants = []; // Starlight-edit
 
         foreach (var variantName in collectionVariantNames)
         {

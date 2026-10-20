@@ -22,9 +22,13 @@ public sealed class AudioStream : IDisposable
     public string? Artist { get; }
     public int ChannelCount { get; }
 
+    // Starlight: which OpenAL device the buffer lives on, a rebuild invalidates every older buffer id.
+    internal int DeviceGeneration { get; }
+
     internal AudioStream(IAudioInternal internalAudio, int bufferId, IClydeHandle? handle, TimeSpan length, int channelCount, string? name = null, string? title = null, string? artist = null)
     {
         _audio = internalAudio;
+        DeviceGeneration = (internalAudio as AudioManager)?.DeviceGeneration ?? 0; // Starlight
         BufferId = bufferId;
         ClydeHandle = handle;
         Length = length;

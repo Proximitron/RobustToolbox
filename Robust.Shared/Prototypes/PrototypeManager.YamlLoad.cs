@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
@@ -6,6 +6,7 @@ using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using JetBrains.Annotations;
+using Robust.Shared._Starlight.Utility;
 using Robust.Shared.Log;
 using Robust.Shared.Random;
 using Robust.Shared.Serialization.Manager;
@@ -23,22 +24,22 @@ public partial class PrototypeManager
     /// <summary>
     ///     Which files to force all prototypes within to be abstract.
     /// </summary>
-    private readonly List<ResPath> _abstractFiles = new();
+    private readonly List<ResPath> _abstractFiles = []; // Starlight-edit
 
     /// <summary>
     ///     Which directories to force all prototypes recursively within to be abstract.
     /// </summary>
-    private readonly List<ResPath> _abstractDirectories = new();
+    private readonly List<ResPath> _abstractDirectories = []; // Starlight-edit
 
     /// <summary>
     /// Which directories to force all prototypes recursively within to be partial.
     /// </summary>
-    private readonly List<(ResPath File, int Index)> _partialFiles = new();
+    private readonly List<(ResPath File, int Index)> _partialFiles = []; // Starlight-edit
 
     /// <summary>
     /// Which directories to force all prototypes recursively within to be partial.
     /// </summary>
-    private readonly List<(ResPath Path, int Index)> _partialDirectories = new();
+    private readonly List<(ResPath Path, int Index)> _partialDirectories = []; // Starlight-edit
 
     public event Action<DataNodeDocument>? LoadedData;
 
@@ -94,7 +95,7 @@ public partial class PrototypeManager
     {
         _hasEverBeenReloaded = true;
         var streams = Resources.ContentFindFiles(path)
-            .Where(filePath => filePath.Extension == "yml" && !filePath.Filename.StartsWith("."))
+            .Where(filePath => filePath.Extension == "yml" && !filePath.Filename.StartsWith('.')) // Starlight-edit
             .ToArray();
 
         // Shuffle to avoid input data patterns causing uneven thread workloads.
@@ -103,6 +104,7 @@ public partial class PrototypeManager
         var sawmill = _logManager.GetSawmill("eng");
 
         var results = streams.AsParallel()
+            .WithMergeOptions(ParallelMergeOptions.NotBuffered) // Starlight-edit: hand results over as soon as they're ready, so the loading screen keeps animating.
             .Select<ResPath, (ResPath, IEnumerable<ExtractedMappingData>)>(file =>
             {
                 try
@@ -174,6 +176,7 @@ public partial class PrototypeManager
         var queue = Array.Empty<Queue<(ResPath File, IEnumerable<ExtractedMappingData> Result)>?>();
         foreach (var (file, result) in results)
         {
+            LoadingPump.Tick(); // Starlight-edit
             if (IsFilePartial(file, out var index))
             {
                 if (index >= queue.Length)
@@ -333,7 +336,7 @@ public partial class PrototypeManager
             if (dataNode.TryGet<MappingDataNode>(IdDataFieldAttribute.Name, out var mappingNode) &&
                 mappingNode.Tag?.Equals(CreateVariantsTag) == true)
             {
-                variantData = new Dictionary<string, ExtractedMappingData>();
+                variantData = []; // Starlight-edit
                 var variantCollection = new List<string>();
 
                 // We need to generate a collection of prototype variants.
@@ -393,7 +396,7 @@ public partial class PrototypeManager
         return new ExtractedMappingData(kind, idNode.Value, parents, dataNode, partialOnly, variantData);
     }
 
-    private bool TryGetParents(KindData kindData, MappingDataNode mappingDataNode, [NotNullWhen(true)] out string[]? parents)
+    private static bool TryGetParents(KindData kindData, MappingDataNode mappingDataNode, [NotNullWhen(true)] out string[]? parents) // Starlight-edit
     {
         parents = null;
 
@@ -679,7 +682,7 @@ public partial class PrototypeManager
         return false;
     }
 
-    private void AbstractPrototype(MappingDataNode mapping)
+    private static void AbstractPrototype(MappingDataNode mapping) // Starlight-edit
     {
         if (mapping.TryGet(AbstractDataFieldAttribute.Name, out var abstractNode))
         {
@@ -706,7 +709,7 @@ public partial class PrototypeManager
     /// raised if the given <see cref="node"/> is not of type
     /// <see cref="SequenceDataNode"/> or <see cref="ValueDataNode"/>
     /// </exception>
-    private string[] NodeToParentArray(DataNode node)
+    private static string[] NodeToParentArray(DataNode node) // Starlight-edit
     {
         switch (node)
         {
@@ -963,18 +966,16 @@ public partial class PrototypeManager
         }
     }
 
-    private bool IsTag(string? nodeTag, string tag)
-    {
-        return nodeTag != null &&
-               nodeTag.Equals(tag, StringComparison.OrdinalIgnoreCase);
-    }
+    // Starlight-start
+    private static bool IsTag(string? nodeTag, string tag)
+        => nodeTag != null
+        && nodeTag.Equals(tag, StringComparison.OrdinalIgnoreCase);
 
-    private bool IsTag(DataNode node, string tag)
-    {
-        return IsTag(node.Tag, tag);
-    }
+    private static bool IsTag(DataNode node, string tag)
+        => IsTag(node.Tag, tag);
+    // Starlight-end
 
-    private bool StartsWithTagOrMappingKeyTag(DataNode dataNode, string tag, [NotNullWhen(true)] out string? actualTag)
+    private static bool StartsWithTagOrMappingKeyTag(DataNode dataNode, string tag, [NotNullWhen(true)] out string? actualTag) // Starlight-edit
     {
         if (IsTag(dataNode, tag))
         {
@@ -1003,10 +1004,10 @@ public partial class PrototypeManager
             Sawmill.Verbose(handler.ToStringAndClear());
     }
 
-    private string GetValueNodeValueToLog(DataNode node)
-    {
-        return node is not ValueDataNode value ? string.Empty : $" {value.Value}";
-    }
+    // Starlight-start
+    private static string GetValueNodeValueToLog(DataNode node)
+        => node is not ValueDataNode value ? string.Empty : $" {value.Value}";
+    // Starlight-end
 
     // All these fields can be null in case the
     private sealed record ExtractedMappingData(

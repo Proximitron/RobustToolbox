@@ -54,7 +54,7 @@ namespace Robust.Shared.GameObjects
             "Amount of time spent processing each entity system", new HistogramConfiguration
             {
                 LabelNames = new[] {"system"},
-                Buckets = Histogram.ExponentialBuckets(0.000_001, 1.5, 25)
+                Buckets = Histogram.ExponentialBuckets(0.000_001, 1.5, 30)
             });
 
         [ViewVariables]

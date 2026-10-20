@@ -293,7 +293,9 @@ namespace Robust.Shared.ContentPack
                         msg = $"{msg}, type: {type}";
                     }
 
-                    foreach (var argument in res.ErrorArguments)
+                    // Starlight: ILVerify leaves this null for some error codes, which crashed the client
+                    // instead of reporting the actual verification error.
+                    foreach (var argument in res.ErrorArguments ?? [])
                     {
                         if (argument.Name == "Token" && argument.Value is int token)
                             msg = $"{msg}, {argument.Name} 0x{token:X8}";

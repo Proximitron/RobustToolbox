@@ -1,8 +1,6 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using Robust.Shared.GameStates;
-using Robust.Shared.Serialization;
 using Robust.Shared.Serialization.Markdown;
 using Robust.Shared.Serialization.Markdown.Mapping;
 using Robust.Shared.Serialization.Markdown.Value;
@@ -38,7 +36,7 @@ public sealed partial class ReplayLoadManager
         var totalData = fileReader.AllFiles.Count(x => x.Filename.StartsWith(DataFilePrefix));
 
         // Init messages are consumed at the very start of checkpoint generation, so load them up front.
-        var initData = LoadInitFile(fileReader, compressionContext);
+        var initData = LoadInitFile(fileReader); // Starlight-edit
         compressionContext.Dispose();
 
         // Index of which data file backs which range of tick indices, so the provider can re-read blocks
@@ -49,12 +47,35 @@ public sealed partial class ReplayLoadManager
         // The history is streamed block-by-block straight into checkpoint generation: at no point does the
         // whole deserialized replay sit in memory. Only the checkpoints (plus whatever per-entity states
         // they share with the last-seen history) survive the pass.
-        var (checkpoints, serverTime) = await GenerateCheckpointsAsync(
-            initData,
-            metaData.CVars,
-            StreamHistory(fileReader, totalData, blocks, stats),
-            stats,
-            callback);
+
+        // Starlight-start: spill checkpoints to disk instead of keeping them all in RAM.
+        var checkpointStore = _confMan.GetCVar(CVars.ReplayCheckpointDiskCache)
+            ? new ReplayCheckpointStore(
+                _serializer,
+                _sawmill,
+                _confMan.GetCVar(CVars.ReplayCheckpointsResident),
+                TryGetCachedImplicitData,
+                _metaId)
+            : null;
+
+        CheckpointState[] checkpoints;
+        TimeSpan[] serverTime;
+        try
+        {
+            (checkpoints, serverTime) = await GenerateCheckpointsAsync(
+                initData,
+                metaData.CVars,
+                StreamHistoryParallel(fileReader, totalData, blocks, stats), // Starlight-edit
+                stats,
+                callback,
+                checkpointStore);
+        }
+        catch
+        {
+            checkpointStore?.Dispose();
+            throw;
+        }
+        // Starlight-end
 
         _timing.Paused = false;
 
@@ -64,10 +85,13 @@ public sealed partial class ReplayLoadManager
         var provider = new BufferedReplayDataProvider(
             fileReader,
             _serializer,
-            blocks.ToArray(),
+            [.. blocks], // Starlight-edit
             stats.TickCount,
             _loadedBlockWindow,
-            _sawmill);
+            _sawmill)
+        {
+            OwnedResource = checkpointStore, // Starlight-edit
+        };
 
         // The streaming pass churns a lot of transient per-block data, some of which gets promoted to
         // Gen2/LOH before dying. Compact once so playback starts with a tight heap. One-off cost.
@@ -163,8 +187,7 @@ public sealed partial class ReplayLoadManager
     }
 
     private ReplayMessage? LoadInitFile(
-        IReplayFileReader fileReader,
-        ZStdCompressionContext compressionContext)
+        IReplayFileReader fileReader) // Starlight-edit
     {
         if (!fileReader.Exists(FileInit))
             return null;
@@ -180,7 +203,7 @@ public sealed partial class ReplayLoadManager
         return LoadYamlFile(fileReader, FileMeta);
     }
 
-    public MappingDataNode? LoadYamlFinalMetadata(IReplayFileReader fileReader)
+    public static MappingDataNode? LoadYamlFinalMetadata(IReplayFileReader fileReader) // Starlight-edit
     {
         return LoadYamlFile(fileReader, FileMetaFinal);
     }
@@ -199,10 +222,7 @@ public sealed partial class ReplayLoadManager
         LoadMetadata(IReplayFileReader fileReader)
     {
         _sawmill.Info($"Reading replay metadata");
-        var data = LoadYamlMetadata(fileReader);
-        if (data == null)
-            throw new Exception("Failed to load yaml metadata");
-
+        var data = LoadYamlMetadata(fileReader) ?? throw new Exception("Failed to load yaml metadata"); // Starlight-edit
         var finalData = LoadYamlFinalMetadata(fileReader);
         TimeSpan? duration = finalData == null
             ? null

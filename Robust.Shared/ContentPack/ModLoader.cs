@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -10,6 +10,7 @@ using System.Runtime.ExceptionServices;
 using System.Runtime.Loader;
 using System.Threading;
 using System.Threading.Tasks;
+using Robust.Shared._Starlight.Utility;
 using Robust.Shared.IoC;
 using Robust.Shared.Utility;
 
@@ -23,19 +24,19 @@ namespace Robust.Shared.ContentPack
         [Dependency] private IResourceManagerInternal _res = default!;
 
         // List of extra assemblies side-loaded from the /Assemblies/ mounted path.
-        private readonly List<Assembly> _sideModules = new();
+        private readonly List<Assembly> _sideModules = []; // Starlight-edit
 
         private readonly AssemblyLoadContext _loadContext;
 
-        private readonly object _lock = new();
+        private readonly Lock _lock = new();
 
         private static int _modLoaderId;
 
         private bool _useLoadContext = true;
         private bool _sandboxingEnabled;
 
-        private readonly List<string> _engineModuleDirectories = new();
-        private readonly List<ExtraModuleLoad> _extraModuleLoads = new();
+        private readonly List<string> _engineModuleDirectories = []; // Starlight-edit
+        private readonly List<ExtraModuleLoad> _extraModuleLoads = []; // Starlight-edit
 
         public event ExtraModuleLoad ExtraModuleLoaders
         {
@@ -124,7 +125,7 @@ namespace Robust.Shared.ContentPack
                 var typeChecker = MakeTypeChecker();
                 var resolver = typeChecker.CreateResolver();
 
-                Parallel.ForEach(files, pair =>
+                LoadingPump.RunBlocking(() => Parallel.ForEach(files, pair => // Starlight
                 {
                     var (name, (_, data, _)) = pair;
 
@@ -133,7 +134,7 @@ namespace Robust.Shared.ContentPack
                     {
                         throw new TypeCheckFailedException($"Assembly {name} failed type checks.");
                     }
-                });
+                })); // Starlight
 
                 Sawmill.Debug($"Verified assemblies in {checkerSw.ElapsedMilliseconds}ms");
             }
@@ -142,13 +143,14 @@ namespace Robust.Shared.ContentPack
                 files,
                 kv => kv.Key,
                 kv => kv.Value,
-                _ => Array.Empty<string>(),
+                _ => [], // Starlight-edit
                 kv => kv.Value.references,
                 allowMissing: true); // missing refs would be non-content assemblies so allow that.
 
             // Actually load them in the order they depend on each other.
             foreach (var item in TopologicalSort.Sort(nodes))
             {
+                LoadingPump.Tick(); // Starlight
                 var (path, memory, _) = item;
                 Sawmill.Debug($"Loading module: '{path}'");
                 try
@@ -456,7 +458,7 @@ namespace Robust.Shared.ContentPack
                 VerifyIL = _sandboxingEnabled,
                 DisableTypeCheck = !_sandboxingEnabled,
                 ExtraRobustLoader = VerifierExtraLoadHandler,
-                EngineModuleDirectories = _engineModuleDirectories.ToArray()
+                EngineModuleDirectories = [.. _engineModuleDirectories] // Starlight-edit
             };
         }
 

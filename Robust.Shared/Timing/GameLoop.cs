@@ -63,7 +63,7 @@ namespace Robust.Shared.Timing
             "Histogram of frametimes in ms",
             new HistogramConfiguration
             {
-                Buckets = Histogram.ExponentialBuckets(.001, 1.5, 10)
+                Buckets = Histogram.ExponentialBuckets(.001, 1.5, 14)
             });
 
         private readonly IGameTiming _timing;

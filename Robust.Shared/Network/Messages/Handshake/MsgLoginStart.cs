@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Immutable;
 using Lidgren.Network;
 using Robust.Shared.Serialization;
@@ -22,6 +23,15 @@ namespace Robust.Shared.Network.Messages.Handshake
         #region Starlight
         public bool Discord;
         public bool Steam;
+
+        /// <summary>
+        /// Version of the Starlight client engine, written by every Starlight build.
+        /// 0 = official RT client (no Starlight data in the message),
+        /// 1 = legacy Starlight client (Discord/Steam flags only, no explicit version).
+        /// </summary>
+        public byte StarlightClientVersion;
+
+        public const byte CurrentStarlightClientVersion = 2;
         #endregion
 
         public override void ReadFromBuffer(NetIncomingMessage buffer, IRobustSerializer serializer)
@@ -32,8 +42,13 @@ namespace Robust.Shared.Network.Messages.Handshake
             Encrypt = buffer.ReadBoolean();
 
             // Starlight-start
-            Discord = buffer.Position < buffer.LengthBits && buffer.ReadBoolean();
+            var hasStarlightData = buffer.Position < buffer.LengthBits;
+            Discord = hasStarlightData && buffer.ReadBoolean();
             Steam = buffer.Position < buffer.LengthBits && buffer.ReadBoolean();
+            if (buffer.LengthBits - buffer.Position >= 8)
+                StarlightClientVersion = Math.Max(buffer.ReadByte(), (byte) 1);
+            else
+                StarlightClientVersion = hasStarlightData ? (byte) 1 : (byte) 0;
             // Starlight-end
         }
 
@@ -47,6 +62,7 @@ namespace Robust.Shared.Network.Messages.Handshake
             // Starlight-start
             buffer.Write(Discord);
             buffer.Write(Steam);
+            buffer.Write(CurrentStarlightClientVersion);
             // Starlight-end
         }
     }
