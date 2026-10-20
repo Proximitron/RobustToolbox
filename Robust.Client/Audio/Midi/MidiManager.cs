@@ -399,6 +399,7 @@ internal sealed partial class MidiManager : IMidiManager
     {
         while (_alive)
         {
+            lock (AudioManager.DeviceLock) // Starlight: the audio device may be re-created on the main thread.
             lock (_renderers)
             {
                 var toRemove = new ValueList<IMidiRenderer>();

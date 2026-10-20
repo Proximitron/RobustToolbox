@@ -5,7 +5,7 @@ using Robust.Shared.Audio.Sources;
 
 namespace Robust.Client.Audio.Sources;
 
-internal sealed class BufferedAudioSource : BaseAudioSource, IBufferedAudioSource
+internal sealed partial class BufferedAudioSource : BaseAudioSource, IBufferedAudioSource // Starlight-edit: partial
 {
     private int[] BufferHandles;
     private Dictionary<int, int> BufferMap = new();
@@ -73,14 +73,14 @@ internal sealed class BufferedAudioSource : BaseAudioSource, IBufferedAudioSourc
         if (!_master.IsMainThread())
         {
             // We can't run this code inside another thread so tell Clyde to clear it up later.
-            _master.DeleteBufferedSourceOnMainThread(SourceHandle, FilterHandle);
+            _master.DeleteBufferedSourceOnMainThread(SourceHandle, FilterHandle, DeviceGeneration); // Starlight-edit
 
             foreach (var handle in BufferHandles)
             {
-                _master.DeleteAudioBufferOnMainThread(handle);
+                _master.DeleteAudioBufferOnMainThread(handle, DeviceGeneration); // Starlight-edit
             }
         }
-        else
+        else if (DeviceGeneration == _master.DeviceGeneration) // Starlight-edit: handles of an older device are already gone.
         {
             if (FilterHandle != 0)
                 ALC.EFX.DeleteFilter(FilterHandle);

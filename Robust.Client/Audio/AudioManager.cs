@@ -58,9 +58,10 @@ internal sealed partial class AudioManager : IAudioInternal
 
     internal ISawmill OpenALSawmill = default!;
 
-    private void AudioCreateContext() // Starlight-edit
+    private bool AudioCreateContext() // Starlight-edit: reports failure instead of carrying on without a context.
     {
         // Load up AL context extensions.
+        _alContextExtensions.Clear(); // Starlight
         var s = ALC.GetString(_openALDevice, AlcGetString.Extensions) ?? "";
         foreach (var extension in s.Split(' ', StringSplitOptions.RemoveEmptyEntries))
         {
@@ -72,7 +73,16 @@ internal sealed partial class AudioManager : IAudioInternal
 
         _openALContext = ALC.CreateContext(_openALDevice, attributeList);
 
+        // Starlight-start: WASAPI can hand out a device with no endpoint behind it, then only the context fails.
+        if (_openALContext == ALContext.Null)
+        {
+            OpenALSawmill.Warning("Unable to create OpenAL context: {0}", ALC.GetError(_openALDevice));
+            return false;
+        }
+        // Starlight-end
+
         ALC.MakeContextCurrent(_openALContext);
+        HasCurrentContext = true; // Starlight
         CheckAlcError(_openALDevice); // Starlight-edit
         _checkAlError();
 
@@ -81,6 +91,8 @@ internal sealed partial class AudioManager : IAudioInternal
         OpenALSawmill.Debug("OpenAL Renderer: {0}", AL.Get(ALGetString.Renderer));
         OpenALSawmill.Debug("OpenAL Version: {0}", AL.Get(ALGetString.Version));
         OpenALSawmill.Debug("HRTF status: {0}", hrtfEnabled == 1 ? "Enabled" : "Disabled");
+        HoldSourcesOnDisconnect(); // Starlight
+        return true; // Starlight
     }
 
     public IReadOnlyList<string> GetAudioDevices()
@@ -162,11 +174,11 @@ internal sealed partial class AudioManager : IAudioInternal
         PreloadOpenAl();
 
         // Starlight-start: without any output device, run on a silent loopback device instead of having no AL context.
-        if (!AudioOpenDevice() && !TryOpenLoopbackDevice())
+        if (!OpenDeviceAndContext())
+        {
+            OpenALSawmill.Error("Unable to initialize any OpenAL device, audio is disabled.");
             return;
-
-        // Create OpenAL context.
-        AudioCreateContext();
+        }
         // Starlight-end
 
         IsEfxSupported = HasAlDeviceExtension("ALC_EXT_EFX");
@@ -228,7 +240,13 @@ internal sealed partial class AudioManager : IAudioInternal
         OpenALSawmill.Info("Switching OpenAL output device to {0}.",
             string.IsNullOrEmpty(requestedDevice) ? "<default>" : requestedDevice);
 
-        if (!_loopback && TryReopenAudioDevice(requestedDevice)) // Starlight-edit: loopback devices can't be reopened, only rebuilt.
+        bool reopened; // Starlight-edit: locked against the MIDI thread, loopback devices can't be reopened, only rebuilt.
+        lock (DeviceLock)
+        {
+            reopened = !_loopback && TryReopenAudioDevice(requestedDevice);
+        }
+
+        if (reopened)
         {
             ReloadDeviceExtensions();
             IsEfxSupported = HasAlDeviceExtension("ALC_EXT_EFX");
@@ -259,7 +277,13 @@ internal sealed partial class AudioManager : IAudioInternal
 
         var reopenTarget = string.IsNullOrEmpty(requestedDevice) ? null : requestedDevice;
         var reopened = reopen(_openALDevice, reopenTarget, BuildContextAttributes()); // Starlight-edit: pass our context attributes, otherwise HRTF/output mode were reset on every device switch.
-        CheckAlcError(_openALDevice); // Starlight-edit
+        // Starlight-start: a failed reopen is expected while nothing is plugged in, callers log what they need.
+        var error = ALC.GetError(_openALDevice);
+        if (!reopened)
+            OpenALSawmill.Debug("alcReopenDeviceSOFT to '{0}' failed: {1}", reopenTarget ?? "<default>", error);
+        else
+            _deviceDisconnected = false;
+        // Starlight-end
         return reopened;
     }
 
@@ -357,6 +381,10 @@ internal sealed partial class AudioManager : IAudioInternal
 
     public void _checkAlError([CallerMemberName] string callerMember = "", [CallerLineNumber] int callerLineNumber = -1)
     {
+        // Starlight: without a context alGetError always reports INVALID_OPERATION, that was an error log per AL call.
+        if (!HasCurrentContext)
+            return;
+
         var error = AL.GetError();
         if (error != ALError.NoError)
         {
@@ -390,7 +418,7 @@ internal sealed partial class AudioManager : IAudioInternal
 
         public ALErrorInterpolatedStringHandler(int literalLength, int formattedCount, out bool shouldAppend)
         {
-            Error = AL.GetError();
+            Error = HasCurrentContext ? AL.GetError() : ALError.NoError; // Starlight-edit
             if (Error == ALError.NoError)
             {
                 shouldAppend = false;

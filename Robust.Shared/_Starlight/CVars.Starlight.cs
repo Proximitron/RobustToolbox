@@ -40,6 +40,12 @@ public abstract partial class CVars
         CVarDef.Create("audio.follow_default_device", true, CVar.CLIENTONLY | CVar.ARCHIVE);
 
     /// <summary>
+    /// Draw lines (DrawLine, line primitives, circle outlines) anti-aliased instead of as aliased GL lines.
+    /// </summary>
+    public static readonly CVarDef<bool> DisplaySmoothLines =
+        CVarDef.Create("display.smooth_lines", true, CVar.CLIENTONLY | CVar.ARCHIVE);
+
+    /// <summary>
     /// If true, replay checkpoints are stored compressed (keyframes + deltas) in a temporary file and only loaded
     /// on demand, instead of keeping every checkpoint as a full game state in RAM.
     /// </summary>

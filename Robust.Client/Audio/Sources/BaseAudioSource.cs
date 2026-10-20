@@ -9,7 +9,7 @@ using Robust.Shared.Maths;
 
 namespace Robust.Client.Audio.Sources;
 
-public abstract class BaseAudioSource : IAudioSource
+public abstract partial class BaseAudioSource : IAudioSource // Starlight-edit: partial
 {
     /*
      * This may look weird having all these methods here however
@@ -41,6 +41,7 @@ public abstract class BaseAudioSource : IAudioSource
     {
         Master = master;
         SourceHandle = sourceHandle;
+        DeviceGeneration = master.DeviceGeneration; // Starlight
         AL.GetSource(SourceHandle, ALSourcef.Gain, out _gain);
     }
 
@@ -358,6 +359,8 @@ public abstract class BaseAudioSource : IAudioSource
         _checkDisposed();
         if (!IsEfxSupported)
             return;
+
+        _auxiliary = audio as AuxiliaryAudio; // Starlight: re-applied after a device rebuild.
 
         if (audio is AuxiliaryAudio impAudio)
         {

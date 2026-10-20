@@ -475,6 +475,8 @@ namespace Robust.Client.Graphics.Clyde
             var blank = new Image<Rgba32>(1, 1);
             blank[0, 0] = new Rgba32(0, 0, 0, 0);
             _stockTextureTransparent = (ClydeTexture) Texture.LoadFromImage(blank, name: "StockTextureTransparent");
+
+            LoadSmoothLineTexture(); // Starlight
         }
 
         /// <summary>

@@ -8,7 +8,7 @@ using Robust.Shared.Maths;
 namespace Robust.Client.Audio.Effects;
 
 /// <inheritdoc />
-internal sealed class AudioEffect : IAudioEffect
+internal sealed partial class AudioEffect : IAudioEffect // Starlight-edit: partial
 {
     internal int Handle;
 
@@ -19,6 +19,7 @@ internal sealed class AudioEffect : IAudioEffect
         Handle = ALC.EFX.GenEffect();
         _master = manager;
         ALC.EFX.Effect(Handle, EffectInteger.EffectType, (int) EffectType.EaxReverb);
+        (manager as AudioManager)?.TrackEffect(this); // Starlight: migrated on device rebuilds.
     }
 
     public void Dispose()

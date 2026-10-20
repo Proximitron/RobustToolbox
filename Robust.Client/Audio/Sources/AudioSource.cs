@@ -7,12 +7,12 @@ using Robust.Shared.Utility;
 
 namespace Robust.Client.Audio.Sources;
 
-internal sealed class AudioSource : BaseAudioSource
+internal sealed partial class AudioSource : BaseAudioSource // Starlight-edit: partial
 {
     /// <summary>
     /// Underlying stream to the audio.
     /// </summary>
-    internal readonly AudioStream SourceStream;
+    internal AudioStream SourceStream; // Starlight-edit: swapped for the reloaded stream after a device rebuild.
 
 #if DEBUG
     private bool _didPositionWarning;
@@ -71,9 +71,9 @@ internal sealed class AudioSource : BaseAudioSource
         if (!disposing)
         {
             // We can't run this code inside the finalizer thread so tell Clyde to clear it up later.
-            Master.DeleteSourceOnMainThread(SourceHandle, FilterHandle);
+            Master.DeleteSourceOnMainThread(SourceHandle, FilterHandle, DeviceGeneration); // Starlight-edit
         }
-        else
+        else if (DeviceGeneration == Master.DeviceGeneration) // Starlight-edit: handles of an older device are already gone.
         {
             if (FilterHandle != 0)
                 ALC.EFX.DeleteFilter(FilterHandle);

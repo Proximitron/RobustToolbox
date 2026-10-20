@@ -813,6 +813,9 @@ namespace Robust.Client.Graphics.Clyde
         private void DrawPrimitives(DrawPrimitiveTopology primitiveTopology, ClydeHandle textureId,
             ReadOnlySpan<ushort> indices, ReadOnlySpan<Vertex2D> vertices)
         {
+            if (TryDrawSmoothLinePrimitives(primitiveTopology, textureId, indices, true, vertices)) // Starlight
+                return;
+
             FinishBatch();
             _batchMetaData = null;
 
@@ -855,6 +858,9 @@ namespace Robust.Client.Graphics.Clyde
         private void DrawPrimitives(DrawPrimitiveTopology primitiveTopology, ClydeHandle textureId,
             in ReadOnlySpan<Vertex2D> vertices)
         {
+            if (TryDrawSmoothLinePrimitives(primitiveTopology, textureId, default, false, vertices)) // Starlight
+                return;
+
             FinishBatch();
             _batchMetaData = null;
 
@@ -895,6 +901,11 @@ namespace Robust.Client.Graphics.Clyde
 
         private void DrawLine(Vector2 a, Vector2 b, Color color)
         {
+            // Starlight-start: anti-aliased lines.
+            if (TryDrawSmoothLine(Vector2.Transform(a, _currentMatrixModel), Vector2.Transform(b, _currentMatrixModel), color))
+                return;
+            // Starlight-end
+
             EnsureBatchSpaceAvailable(2, 0);
             EnsureBatchState(_stockTextureWhite.TextureId, false, BatchPrimitiveType.LineList, _queuedShader);
 

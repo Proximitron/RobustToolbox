@@ -33,7 +33,7 @@ public sealed partial class AudioSystem
 
     private void OnAuxiliaryAdd(EntityUid uid, AudioAuxiliaryComponent component, ComponentAdd args)
     {
-        component.Auxiliary = _audio.IsEfxSupported ? new AuxiliaryAudio() : new DummyAuxiliaryAudio();
+        component.Auxiliary = _audio.IsEfxSupported ? new AuxiliaryAudio(_audio) : new DummyAuxiliaryAudio(); // Starlight-edit: tracked for device rebuilds.
     }
 
     private void OnAuxiliaryAuto(EntityUid uid, AudioAuxiliaryComponent component, ref AfterAutoHandleStateEvent args)

@@ -216,7 +216,13 @@ internal sealed partial class AudioManager
             ? LoadAlcDelegate<AlcResetDeviceSoftDelegate>("alcResetDeviceSOFT")
             : null;
 
-        if (reset != null && reset(_openALDevice, BuildContextAttributes()))
+        bool applied;
+        lock (DeviceLock)
+        {
+            applied = reset != null && reset(_openALDevice, BuildContextAttributes());
+        }
+
+        if (applied)
         {
             OpenALSawmill.Info("Applied new audio output mode.");
             return;
@@ -279,153 +285,6 @@ internal sealed partial class AudioManager
                 frames -= count;
             }
         }
-    }
-
-    #endregion
-
-    #region Device monitoring
-
-    private void StarlightFrameUpdate(float frameTime)
-    {
-        if (!_audioInitialized)
-            return;
-
-        if (_loopback)
-            RenderLoopback(frameTime);
-
-        _deviceCheckTimer += frameTime;
-        if (_deviceCheckTimer < DeviceCheckInterval)
-            return;
-
-        _deviceCheckTimer = 0;
-
-        try
-        {
-            CheckDevice();
-        }
-        catch (Exception e)
-        {
-            OpenALSawmill.Error($"Error while checking audio device state: {e}");
-        }
-    }
-
-    private void CheckDevice()
-    {
-        if (_loopback)
-        {
-            // Output device showed up (e.g. headphones plugged in), move over to it.
-            if (GetAudioDevices().Count == 0)
-                return;
-
-            // Make sure it actually opens before tearing everything down, a rebuild reloads every sound.
-            var probe = OpenDeviceUtf8(null);
-            if (probe == ALDevice.Null)
-                return;
-
-            ALC.CloseDevice(probe);
-
-            OpenALSawmill.Info("Audio output device became available.");
-            RebuildAudioDevice();
-            return;
-        }
-
-        if (HasAlDeviceExtension("ALC_EXT_disconnect")
-            && ALC.GetInteger(_openALDevice, (AlcGetInteger) AlcConnected) == 0)
-        {
-            OpenALSawmill.Warning("Audio output device got disconnected, trying to recover.");
-
-            var preferred = _cfg.GetCVar(CVars.AudioDevice);
-            if (TryReopenAudioDevice(preferred) || (preferred != "" && TryReopenAudioDevice("")))
-            {
-                ReloadDeviceExtensions();
-                _lastDefaultDevice = GetDefaultAudioDevice();
-                OpenALSawmill.Info("Recovered audio output.");
-                return;
-            }
-
-            // Nothing to reopen onto. Rebuild, which falls back to the silent loopback device if needed.
-            RebuildAudioDevice();
-            return;
-        }
-
-        if (!_cfg.GetCVar(CVars.AudioFollowDefaultDevice) || _cfg.GetCVar(CVars.AudioDevice) != "")
-            return;
-
-        var defaultDevice = GetDefaultAudioDevice();
-        if (defaultDevice == null || defaultDevice == _lastDefaultDevice)
-            return;
-
-        var previous = _lastDefaultDevice;
-        _lastDefaultDevice = defaultDevice;
-        if (previous == null)
-            return;
-
-        OpenALSawmill.Info($"System default audio device changed to '{defaultDevice}', switching.");
-        if (TryReopenAudioDevice(""))
-            ReloadDeviceExtensions();
-    }
-
-    /// <summary>
-    /// Fully tears down and re-creates the device and context. Used when the device can't be reopened in place.
-    /// Unlike a reopen this loses all buffers, so loaded sounds get reloaded from the resource cache.
-    /// </summary>
-    private void RebuildAudioDevice()
-    {
-        DisposeAllAudio();
-        FlushALDisposeQueues();
-
-        if (_openALContext != ALContext.Null)
-        {
-            ALC.MakeContextCurrent(ALContext.Null);
-            ALC.DestroyContext(_openALContext);
-            _openALContext = ALContext.Null;
-        }
-
-        if (_openALDevice != ALDevice.Null)
-        {
-            ALC.CloseDevice(_openALDevice);
-            _openALDevice = ALDevice.Null;
-        }
-
-        _loopback = false;
-        if (!AudioOpenDevice() && !TryOpenLoopbackDevice())
-        {
-            OpenALSawmill.Error("Failed to re-create any OpenAL device.");
-            _audioInitialized = false;
-            return;
-        }
-
-        AudioCreateContext();
-        IsEfxSupported = HasAlDeviceExtension("ALC_EXT_EFX");
-        SetMasterGain(_cfg.GetCVar(CVars.AudioMasterVolume));
-
-        // Distance model and doppler are context state, the old rebuild path forgot to restore these.
-        if (_attenuation != Shared.Audio.Attenuation.Invalid)
-            SetAttenuation(_attenuation);
-        SetDopplerFactor(_dopplerFactor);
-
-        _lastDefaultDevice = GetDefaultAudioDevice();
-        ReloadAudioResources();
-    }
-
-    private void ReloadAudioResources()
-    {
-        var paths = _cache.GetAllResources<AudioResource>().Select(x => x.Key).ToArray();
-        var failed = 0;
-        foreach (var path in paths)
-        {
-            try
-            {
-                _cache.ReloadResource<AudioResource>(path);
-            }
-            catch (Exception)
-            {
-                // Resources created from memory (e.g. raw/streamed audio) have no file to reload from.
-                failed++;
-            }
-        }
-
-        OpenALSawmill.Info($"Reloaded {paths.Length - failed}/{paths.Length} audio resources after device rebuild.");
     }
 
     #endregion
