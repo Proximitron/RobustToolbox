@@ -89,6 +89,7 @@ public sealed partial class AudioSystem : SharedAudioSystem
         var entity = SetupAudio(specifier, audioParams);
         AddAudioFilter(entity, entity.Comp, playerFilter);
         entity.Comp.Global = true;
+        RaiseAudioFilterApplied(entity, playerFilter, recordReplay); // Starlight
         return (entity, entity.Comp);
     }
 
@@ -110,6 +111,7 @@ public sealed partial class AudioSystem : SharedAudioSystem
         // Some methods try to reduce the audio range, resulting in a custom filter which then unnecessarily has to
         // use PVS overrides. PlayEntity with a reduced range shouldn't need PVS overrides at all.
         AddAudioFilter(entity, entity.Comp, playerFilter);
+        RaiseAudioFilterApplied(entity, playerFilter, recordReplay); // Starlight
 
         return (entity, entity.Comp);
     }
@@ -147,6 +149,7 @@ public sealed partial class AudioSystem : SharedAudioSystem
         var entity = SetupAudio(specifier, audioParams);
         XformSystem.SetCoordinates(entity, coordinates);
         AddAudioFilter(entity, entity.Comp, playerFilter);
+        RaiseAudioFilterApplied(entity, playerFilter, recordReplay); // Starlight
 
         return (entity, entity.Comp);
     }
