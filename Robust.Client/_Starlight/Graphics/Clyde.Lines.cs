@@ -15,6 +15,8 @@ internal sealed partial class Clyde
     private const float SmoothLineUvLow = 1f / 6f;
     private const float SmoothLineUvHigh = 5f / 6f;
 
+    private const int SmoothLineMaxChunkSegments = 4096;
+
     private const string DefaultSpriteShaderPath = "/Shaders/Internal/default-sprite.swsl";
 
     private ClydeTexture _smoothLineTexture = default!;
@@ -157,8 +159,8 @@ internal sealed partial class Clyde
         // Upper bound of segments for any of the topologies.
         var maxSegments = topology == DrawPrimitiveTopology.LineList ? count / 2 : count;
 
-        // Keep every chunk addressable with ushort indices and within one batch.
-        var chunkSegments = Math.Min(maxSegments, Math.Min(ushort.MaxValue / 4, (BatchVertexData.Length - 1) / 4));
+        var chunkSegments = Math.Min(Math.Min(maxSegments, SmoothLineMaxChunkSegments),
+            Math.Min((BatchVertexData.Length - 1) / 4, BatchIndexData.Length / 6));
         var quadVertices = ArrayPool<Vertex2D>.Shared.Rent(chunkSegments * 4);
         var quadIndices = ArrayPool<ushort>.Shared.Rent(chunkSegments * 6);
 
