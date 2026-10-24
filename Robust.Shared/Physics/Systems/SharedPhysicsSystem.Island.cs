@@ -769,11 +769,28 @@ public abstract partial class SharedPhysicsSystem
         var offset = island.Offset;
         var gravity = Gravity;
 
+        // Starlight - start
+        var shouldCheckClippingRecovery = false;
+        // Starlight - end
 
         for (var i = 0; i < island.Bodies.Count; i++)
         {
             var bodyEnt = island.Bodies[i];
             var body = bodyEnt.Comp1;
+
+            // Starlight - start
+            if (body.ClippingRecoveryDirection != Vector2.Zero ||
+                (!prediction &&
+                    body.BodyType == BodyType.KinematicController &&
+                    body.ContactCount > 0) ||
+                (!prediction && data.SleepAllowed &&
+                    body.BodyType == BodyType.Dynamic && body.SleepingAllowed &&
+                    body.SleepTime + data.FrameTime >= data.TimeToSleep))
+            {
+                shouldCheckClippingRecovery = true;
+            }
+            // Starlight - end
+
             var xform = bodyEnt.Comp2;
             var (worldPos, worldRot) =
                 _transform.GetWorldPositionRotation(xform);
@@ -895,12 +912,16 @@ public abstract partial class SharedPhysicsSystem
             angles[i] += angularVelocity * data.FrameTime;
         }
 
+        // Starlight - start
+        if (shouldCheckClippingRecovery)
+            PrepareClippingRecoveryPositionConstraints(in island, positionConstraints);
+        // Starlight - end
+
         island.PositionSolved = false;
-        var contactsOkay = false; // Starlight
 
         for (var i = 0; i < data.PositionIterations; i++)
         {
-            contactsOkay = SolvePositionConstraints(in data, in island, options, positionConstraints, positions, angles); // Starlight
+            var contactsOkay = SolvePositionConstraints(in data, in island, options, positionConstraints, positions, angles); // Starlight
             var jointsOkay = true;
 
             for (var j = 0; j < island.Joints.Count; ++j)
@@ -922,8 +943,21 @@ public abstract partial class SharedPhysicsSystem
             }
         }
 
-        if (!contactsOkay) // Starlight
-            RecoverClippedBodies(in data, in island, positionConstraints, positions, angles, linearVelocities); // Starlight
+        // Starlight - start
+        if (shouldCheckClippingRecovery &&
+            RecoverClippedBodies(
+                in data,
+                in island,
+                positionConstraints,
+                positions,
+                angles,
+                linearVelocities,
+                angularVelocities,
+                prediction))
+        {
+            island.PositionSolved = false;
+        }
+        // Starlight - end
 
         // Transform the solved positions back into local terms
         // This means we can run the entire solver in parallel and not have to worry about stale world positions later
