@@ -17,10 +17,12 @@ public abstract partial class SharedPhysicsSystem
 
     private const float ClippingRecoveryStuckDelay = 0.5f;
 
-    // Sub-tile sampling avoids skipping openings when the body starts off-center.
     private const float ClippingRecoveryFieldSize = 0.5f;
-    private const float ClippingRecoveryRefinementFieldSize = 0.25f;
-    private const int ClippingRecoveryMaxRings = 10;
+    private const float ClippingRecoveryMaxFieldSize = 1f;
+    private const float ClippingRecoveryMaxDistance = 5f;
+    private const float ClippingRecoveryFullScanDistance = 2f;
+    private const int ClippingRecoveryMaxOuterRingSamples = 8;
+    private const int ClippingRecoveryMaxCollisionQueries = 128;
     private const float ClippingRecoveryStartSeparation = -3f * PhysicsConstants.LinearSlop;
     private const float ClippingRecoveryMaxPush = 0.5f;
     private const float PersistentRecoveryMaxGravityAlignment = 0.5f;
@@ -135,6 +137,10 @@ public abstract partial class SharedPhysicsSystem
                     continue;
                 }
 
+                LogManager.GetSawmill("clipping_recovery").Info(
+                    "Starting complex clipping recovery search for {EntityName} ({EntityUid})",
+                    MetaData(bodyEnt.Owner).EntityName,
+                    bodyEnt.Owner);
                 direction = FindClippingRecoveryDirection(
                     mapId,
                     body,
@@ -312,72 +318,138 @@ public abstract partial class SharedPhysicsSystem
         Vector2 position,
         float angle)
     {
-        var nearestOffset = FindNearestClippingRecoveryOffset(
+        var fieldSize = GetClippingRecoverySampleSpacing(fixtures, angle);
+        var collisionQueries = 0;
+        var offset = FindFirstClippingRecoveryOffset(
             mapId,
             body,
             fixtures,
             position,
             angle,
-            ClippingRecoveryFieldSize,
-            ClippingRecoveryMaxRings * ClippingRecoveryFieldSize);
+            fieldSize,
+            ClippingRecoveryMaxDistance,
+            ref collisionQueries);
 
-        if (nearestOffset == Vector2.Zero)
-            return Vector2.UnitY;
-
-        if (ClippingRecoveryFieldSize > ClippingRecoveryRefinementFieldSize)
-        {
-            var refinedOffset = FindNearestClippingRecoveryOffset(
-                mapId,
-                body,
-                fixtures,
-                position,
-                angle,
-                ClippingRecoveryRefinementFieldSize,
-                nearestOffset.Length());
-
-            if (refinedOffset != Vector2.Zero)
-                nearestOffset = refinedOffset;
-        }
-
-        return Vector2.Normalize(nearestOffset);
+        return offset == Vector2.Zero ? Vector2.UnitY : Vector2.Normalize(offset);
     }
 
-    private Vector2 FindNearestClippingRecoveryOffset(
+    private static float GetClippingRecoverySampleSpacing(FixturesComponent fixtures, float angle)
+    {
+        var transform = new Transform(angle);
+        var bounds = default(Box2);
+        var hasBounds = false;
+
+        foreach (var fixture in fixtures.Fixtures.Values)
+        {
+            if (!fixture.Hard || (fixture.CollisionLayer == 0 && fixture.CollisionMask == 0))
+                continue;
+
+            for (var childIndex = 0; childIndex < fixture.Shape.ChildCount; childIndex++)
+            {
+                var fixtureBounds = fixture.Shape.ComputeAABB(transform, childIndex);
+                if (hasBounds)
+                {
+                    bounds = bounds.Union(fixtureBounds);
+                }
+                else
+                {
+                    bounds = fixtureBounds;
+                    hasBounds = true;
+                }
+            }
+        }
+
+        if (!hasBounds)
+            return ClippingRecoveryFieldSize;
+
+        var size = bounds.TopRight - bounds.BottomLeft;
+        var objectSize = MathF.Max(size.X, size.Y);
+        return MathF.Max(
+            ClippingRecoveryFieldSize,
+            MathF.Min(ClippingRecoveryMaxFieldSize, objectSize * 0.5f));
+    }
+
+    private Vector2 FindFirstClippingRecoveryOffset(
         MapId mapId,
         PhysicsComponent body,
         FixturesComponent fixtures,
         Vector2 position,
         float angle,
         float fieldSize,
-        float maxDistance)
+        float maxDistance,
+        ref int collisionQueries)
     {
-        var maxSamples = (int)MathF.Ceiling(maxDistance / fieldSize);
+        var maxRing = (int)MathF.Ceiling(maxDistance / fieldSize);
         var maxDistanceSquared = maxDistance * maxDistance;
-        var nearestOffset = Vector2.Zero;
-        var nearestDistanceSquared = float.PositiveInfinity;
-
-        for (var x = -maxSamples; x <= maxSamples; x++)
+        for (var ring = 1; ring <= maxRing; ring++)
         {
-            for (var y = -maxSamples; y <= maxSamples; y++)
+            var ringSampleCount = 8 * ring;
+            var validSampleCount = 0;
+            for (var sampleIndex = 0; sampleIndex < ringSampleCount; sampleIndex++)
             {
-                var offset = new Vector2(x, y) * fieldSize;
-                var distanceSquared = offset.LengthSquared();
-                if (distanceSquared == 0f ||
-                    distanceSquared > maxDistanceSquared ||
-                    distanceSquared >= nearestDistanceSquared)
-                {
-                    continue;
-                }
-
-                if (IsPositionColliding(mapId, body, fixtures, position + offset, angle))
-                    continue;
-
-                nearestOffset = offset;
-                nearestDistanceSquared = distanceSquared;
+                var offset = GetClippingRecoveryRingOffset(ring, sampleIndex, fieldSize);
+                if (offset.LengthSquared() <= maxDistanceSquared)
+                    validSampleCount++;
             }
+
+            if (validSampleCount == 0)
+                continue;
+
+            var remainingQueries = ClippingRecoveryMaxCollisionQueries - collisionQueries;
+            var ringSampleLimit = ring * fieldSize <= ClippingRecoveryFullScanDistance
+                ? validSampleCount
+                : ClippingRecoveryMaxOuterRingSamples;
+            var samplesThisRing = Math.Min(Math.Min(validSampleCount, ringSampleLimit), remainingQueries);
+            if (samplesThisRing == 0)
+                return Vector2.Zero;
+
+            var validSampleIndex = 0;
+            var sampledIndex = 0;
+            for (var sampleIndex = 0; sampleIndex < ringSampleCount; sampleIndex++)
+            {
+                var offset = GetClippingRecoveryRingOffset(ring, sampleIndex, fieldSize);
+                var distanceSquared = offset.LengthSquared();
+                if (distanceSquared > maxDistanceSquared)
+                    continue;
+
+                var shouldCheck = samplesThisRing == validSampleCount ||
+                                  validSampleIndex == sampledIndex * validSampleCount / samplesThisRing;
+                validSampleIndex++;
+                if (!shouldCheck)
+                    continue;
+
+                sampledIndex++;
+                collisionQueries++;
+                if (!IsPositionColliding(mapId, body, fixtures, position + offset, angle))
+                    return offset;
+
+                if (sampledIndex == samplesThisRing)
+                    break;
+            }
+
+            if (collisionQueries >= ClippingRecoveryMaxCollisionQueries)
+                return Vector2.Zero;
         }
 
-        return nearestOffset;
+        return Vector2.Zero;
+    }
+
+    private static Vector2 GetClippingRecoveryRingOffset(int ring, int sampleIndex, float fieldSize)
+    {
+        var ringSampleCount = 8 * ring;
+        // Start at +Y so floor contacts can recover upward on the first successful sample.
+        var perimeterSampleIndex = (sampleIndex + 5 * ring) % ringSampleCount;
+        var sideLength = ring * 2;
+        var side = perimeterSampleIndex / sideLength;
+        var index = perimeterSampleIndex % sideLength;
+        var offset = side switch
+        {
+            0 => new Vector2(-ring + index, -ring),
+            1 => new Vector2(ring, -ring + index),
+            2 => new Vector2(ring - index, ring),
+            _ => new Vector2(-ring, ring - index),
+        };
+        return offset * fieldSize;
     }
 
     private bool IsPositionColliding(
