@@ -6,4 +6,5 @@ public sealed partial class PhysicsComponent
 {
     internal bool ClippingRecoveryActive;
     internal Vector2 ClippingRecoveryDirection;
+    internal float ClippingRecoveryTime;
 }
