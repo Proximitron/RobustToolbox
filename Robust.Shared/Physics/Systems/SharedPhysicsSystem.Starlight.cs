@@ -19,10 +19,6 @@ public abstract partial class SharedPhysicsSystem
 
     private const float ClippingRecoveryFieldSize = 0.5f;
     private const float ClippingRecoveryMaxFieldSize = 1f;
-    private const float ClippingRecoveryMaxDistance = 5f;
-    private const float ClippingRecoveryFullScanDistance = 2f;
-    private const int ClippingRecoveryMaxOuterRingSamples = 8;
-    private const int ClippingRecoveryMaxCollisionQueries = 128;
     private const float ClippingRecoveryStartSeparation = -3f * PhysicsConstants.LinearSlop;
     private const float ClippingRecoveryMaxPush = 0.5f;
     private const float PersistentRecoveryMaxGravityAlignment = 0.5f;
@@ -320,6 +316,12 @@ public abstract partial class SharedPhysicsSystem
     {
         var fieldSize = GetClippingRecoverySampleSpacing(fixtures, angle);
         var collisionQueries = 0;
+        var maxDistance = MathF.Max(0f, _cfg.GetCVar(CVars.PhysicsClippingRecoveryMaxDistance));
+        var fullScanDistance = MathF.Min(
+            maxDistance,
+            MathF.Max(0f, _cfg.GetCVar(CVars.PhysicsClippingRecoveryFullScanDistance)));
+        var maxOuterRingSamples = Math.Max(0, _cfg.GetCVar(CVars.PhysicsClippingRecoveryMaxOuterRingSamples));
+        var maxCollisionQueries = Math.Max(0, _cfg.GetCVar(CVars.PhysicsClippingRecoveryMaxCollisionQueries));
         var offset = FindFirstClippingRecoveryOffset(
             mapId,
             body,
@@ -327,7 +329,10 @@ public abstract partial class SharedPhysicsSystem
             position,
             angle,
             fieldSize,
-            ClippingRecoveryMaxDistance,
+            maxDistance,
+            fullScanDistance,
+            maxOuterRingSamples,
+            maxCollisionQueries,
             ref collisionQueries);
 
         return offset == Vector2.Zero ? Vector2.UnitY : Vector2.Normalize(offset);
@@ -377,6 +382,9 @@ public abstract partial class SharedPhysicsSystem
         float angle,
         float fieldSize,
         float maxDistance,
+        float fullScanDistance,
+        int maxOuterRingSamples,
+        int maxCollisionQueries,
         ref int collisionQueries)
     {
         var maxRing = (int)MathF.Ceiling(maxDistance / fieldSize);
@@ -395,10 +403,10 @@ public abstract partial class SharedPhysicsSystem
             if (validSampleCount == 0)
                 continue;
 
-            var remainingQueries = ClippingRecoveryMaxCollisionQueries - collisionQueries;
-            var ringSampleLimit = ring * fieldSize <= ClippingRecoveryFullScanDistance
+            var remainingQueries = maxCollisionQueries - collisionQueries;
+            var ringSampleLimit = ring * fieldSize <= fullScanDistance
                 ? validSampleCount
-                : ClippingRecoveryMaxOuterRingSamples;
+                : maxOuterRingSamples;
             var samplesThisRing = Math.Min(Math.Min(validSampleCount, ringSampleLimit), remainingQueries);
             if (samplesThisRing == 0)
                 return Vector2.Zero;
@@ -427,7 +435,7 @@ public abstract partial class SharedPhysicsSystem
                     break;
             }
 
-            if (collisionQueries >= ClippingRecoveryMaxCollisionQueries)
+            if (collisionQueries >= maxCollisionQueries)
                 return Vector2.Zero;
         }
 

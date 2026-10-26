@@ -13,6 +13,30 @@ public abstract partial class CVars
         CVarDef.Create("metrics.granular_ui_system", false, CVar.SERVERONLY);
 
     /// <summary>
+    /// Maximum distance searched when recovering a clipped physics body. Larger values can increase search cost.
+    /// </summary>
+    public static readonly CVarDef<float> PhysicsClippingRecoveryMaxDistance =
+        CVarDef.Create("physics.clipping_recovery_max_distance", 5f, CVar.ARCHIVE | CVar.REPLICATED | CVar.SERVER);
+
+    /// <summary>
+    /// Distance within which all valid samples may be checked during clipping recovery.
+    /// </summary>
+    public static readonly CVarDef<float> PhysicsClippingRecoveryFullScanDistance =
+        CVarDef.Create("physics.clipping_recovery_full_scan_distance", 2f, CVar.ARCHIVE | CVar.REPLICATED | CVar.SERVER);
+
+    /// <summary>
+    /// Maximum samples checked per ring outside the full-scan distance during clipping recovery.
+    /// </summary>
+    public static readonly CVarDef<int> PhysicsClippingRecoveryMaxOuterRingSamples =
+        CVarDef.Create("physics.clipping_recovery_max_outer_ring_samples", 8, CVar.ARCHIVE | CVar.REPLICATED | CVar.SERVER);
+
+    /// <summary>
+    /// Maximum map collision queries performed by one complex clipping recovery search.
+    /// </summary>
+    public static readonly CVarDef<int> PhysicsClippingRecoveryMaxCollisionQueries =
+        CVarDef.Create("physics.clipping_recovery_max_collision_queries", 128, CVar.ARCHIVE | CVar.REPLICATED | CVar.SERVER);
+
+    /// <summary>
     /// Mode with which to handle ADDITIONAL authentication on the server.
     /// </summary>
     public static readonly CVarDef<int> AdditionalAuthMode =
