@@ -15,8 +15,6 @@ public abstract partial class SharedPhysicsSystem
 {
     private const float ClippingRecoverySpeed = 0.5f;
 
-    private const float ClippingRecoveryStuckDelay = 0.5f;
-
     private const float ClippingRecoveryFieldSize = 0.5f;
     private const float ClippingRecoveryMaxFieldSize = 1f;
     private const float ClippingRecoveryStartSeparation = -3f * PhysicsConstants.LinearSlop;
@@ -111,16 +109,17 @@ public abstract partial class SharedPhysicsSystem
                     continue;
                 }
 
+                var stuckDelay = MathF.Max(0f, _cfg.GetCVar(CVars.PhysicsClippingRecoveryStuckDelay));
                 if (body.BodyType == BodyType.Dynamic)
                 {
-                    body.ClippingRecoveryTime = ClippingRecoveryStuckDelay;
+                    body.ClippingRecoveryTime = stuckDelay;
                 }
                 else
                 {
                     body.ClippingRecoveryTime = MathF.Min(
-                        ClippingRecoveryStuckDelay,
+                        stuckDelay,
                         body.ClippingRecoveryTime + data.FrameTime);
-                    if (body.ClippingRecoveryTime < ClippingRecoveryStuckDelay)
+                    if (body.ClippingRecoveryTime < stuckDelay)
                         continue;
                 }
 

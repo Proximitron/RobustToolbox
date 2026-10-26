@@ -13,6 +13,12 @@ public abstract partial class CVars
         CVarDef.Create("metrics.granular_ui_system", false, CVar.SERVERONLY);
 
     /// <summary>
+    /// Delay before starting complex clipping recovery for a stuck physics body.
+    /// </summary>
+    public static readonly CVarDef<float> PhysicsClippingRecoveryStuckDelay =
+        CVarDef.Create("physics.clipping_recovery_stuck_delay", 0.5f, CVar.ARCHIVE | CVar.REPLICATED | CVar.SERVER);
+
+    /// <summary>
     /// Maximum distance searched when recovering a clipped physics body. Larger values can increase search cost.
     /// </summary>
     public static readonly CVarDef<float> PhysicsClippingRecoveryMaxDistance =
